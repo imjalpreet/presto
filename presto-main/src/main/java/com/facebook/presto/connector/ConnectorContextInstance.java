@@ -24,6 +24,8 @@ import com.facebook.presto.spi.function.StandardFunctionResolution;
 import com.facebook.presto.spi.plan.FilterStatsCalculatorService;
 import com.facebook.presto.spi.relation.RowExpressionService;
 
+import java.util.function.Supplier;
+
 import static java.util.Objects.requireNonNull;
 
 public class ConnectorContextInstance
@@ -38,6 +40,7 @@ public class ConnectorContextInstance
     private final RowExpressionService rowExpressionService;
     private final FilterStatsCalculatorService filterStatsCalculatorService;
     private final BlockEncodingSerde blockEncodingSerde;
+    private final Supplier<ClassLoader> duplicatePluginClassLoaderFactory;
 
     public ConnectorContextInstance(
             NodeManager nodeManager,
@@ -48,7 +51,8 @@ public class ConnectorContextInstance
             PageIndexerFactory pageIndexerFactory,
             RowExpressionService rowExpressionService,
             FilterStatsCalculatorService filterStatsCalculatorService,
-            BlockEncodingSerde blockEncodingSerde)
+            BlockEncodingSerde blockEncodingSerde,
+            Supplier<ClassLoader> duplicatePluginClassLoaderFactory)
     {
         this.nodeManager = requireNonNull(nodeManager, "nodeManager is null");
         this.typeManager = requireNonNull(typeManager, "typeManager is null");
@@ -59,6 +63,7 @@ public class ConnectorContextInstance
         this.rowExpressionService = requireNonNull(rowExpressionService, "rowExpressionService is null");
         this.filterStatsCalculatorService = requireNonNull(filterStatsCalculatorService, "filterStatsCalculatorService is null");
         this.blockEncodingSerde = requireNonNull(blockEncodingSerde, "blockEncodingSerde is null");
+        this.duplicatePluginClassLoaderFactory = requireNonNull(duplicatePluginClassLoaderFactory, "duplicatePluginClassLoaderFactory is null");
     }
 
     @Override
@@ -113,5 +118,11 @@ public class ConnectorContextInstance
     public BlockEncodingSerde getBlockEncodingSerde()
     {
         return blockEncodingSerde;
+    }
+
+    @Override
+    public ClassLoader duplicatePluginClassLoader()
+    {
+        return duplicatePluginClassLoaderFactory.get();
     }
 }

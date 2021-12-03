@@ -45,7 +45,7 @@ import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkState;
 import static java.util.Objects.requireNonNull;
 
-public class HandleResolver
+public final class HandleResolver
 {
     private final ConcurrentMap<String, MaterializedHandleResolver> handleResolvers = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, MaterializedFunctionHandleResolver> functionHandleResolvers = new ConcurrentHashMap<>();
@@ -53,10 +53,10 @@ public class HandleResolver
     @Inject
     public HandleResolver()
     {
-        handleResolvers.put(REMOTE_CONNECTOR_ID.toString(), new MaterializedHandleResolver(new RemoteHandleResolver()));
-        handleResolvers.put("$system", new MaterializedHandleResolver(new SystemHandleResolver()));
-        handleResolvers.put("$info_schema", new MaterializedHandleResolver(new InformationSchemaHandleResolver()));
-        handleResolvers.put("$empty", new MaterializedHandleResolver(new EmptySplitHandleResolver()));
+        addConnectorName(REMOTE_CONNECTOR_ID.toString(), new RemoteHandleResolver());
+        addConnectorName("$system", new SystemHandleResolver());
+        addConnectorName("$info_schema", new InformationSchemaHandleResolver());
+        addConnectorName("$empty", new EmptySplitHandleResolver());
 
         functionHandleResolvers.put("$static", new MaterializedFunctionHandleResolver(new BuiltInFunctionNamespaceHandleResolver()));
         functionHandleResolvers.put("$session", new MaterializedFunctionHandleResolver(new SessionFunctionHandleResolver()));
@@ -69,6 +69,11 @@ public class HandleResolver
         MaterializedHandleResolver existingResolver = handleResolvers.putIfAbsent(name, new MaterializedHandleResolver(resolver));
         checkState(existingResolver == null || existingResolver.equals(resolver),
                 "Connector '%s' is already assigned to resolver: %s", name, existingResolver);
+    }
+
+    public void removeCatalogHandleResolver(String catalogName)
+    {
+        handleResolvers.remove(catalogName);
     }
 
     public void addFunctionNamespace(String name, FunctionHandleResolver resolver)
