@@ -51,7 +51,6 @@ import javax.inject.Inject;
 import java.io.File;
 import java.io.IOException;
 import java.net.URL;
-import java.net.URLClassLoader;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -59,6 +58,7 @@ import java.util.List;
 import java.util.ServiceLoader;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Supplier;
 
 import static com.facebook.presto.metadata.FunctionExtractor.extractFunctions;
 import static com.facebook.presto.server.PluginDiscovery.discoverPlugins;
@@ -175,14 +175,14 @@ public class PluginManager
             throws Exception
     {
         log.info("-- Loading plugin %s --", plugin);
-        URLClassLoader pluginClassLoader = buildClassLoader(plugin);
+        PluginClassLoader pluginClassLoader = buildClassLoader(plugin);
         try (ThreadContextClassLoader ignored = new ThreadContextClassLoader(pluginClassLoader)) {
             loadPlugin(pluginClassLoader);
         }
         log.info("-- Finished loading plugin %s --", plugin);
     }
 
-    private void loadPlugin(URLClassLoader pluginClassLoader)
+    private void loadPlugin(PluginClassLoader pluginClassLoader)
     {
         ServiceLoader<Plugin> serviceLoader = ServiceLoader.load(Plugin.class, pluginClassLoader);
         List<Plugin> plugins = ImmutableList.copyOf(serviceLoader);
@@ -193,11 +193,11 @@ public class PluginManager
 
         for (Plugin plugin : plugins) {
             log.info("Installing %s", plugin.getClass().getName());
-            installPlugin(plugin);
+            installPlugin(plugin, pluginClassLoader::duplicate);
         }
     }
 
-    public void installPlugin(Plugin plugin)
+    public void installPlugin(Plugin plugin, Supplier<ClassLoader> duplicatePluginClassLoaderFactory)
     {
         for (BlockEncoding blockEncoding : plugin.getBlockEncodings()) {
             log.info("Registering block encoding %s", blockEncoding.getName());
@@ -220,7 +220,7 @@ public class PluginManager
                 continue;
             }
             log.info("Registering connector %s", connectorFactory.getName());
-            connectorManager.addConnectorFactory(connectorFactory);
+            connectorManager.addConnectorFactory(connectorFactory, duplicatePluginClassLoaderFactory);
         }
 
         for (Class<?> functionClass : plugin.getFunctions()) {
@@ -269,7 +269,7 @@ public class PluginManager
         }
     }
 
-    private URLClassLoader buildClassLoader(String plugin)
+    private PluginClassLoader buildClassLoader(String plugin)
             throws Exception
     {
         File file = new File(plugin);
@@ -282,11 +282,11 @@ public class PluginManager
         return buildClassLoaderFromCoordinates(plugin);
     }
 
-    private URLClassLoader buildClassLoaderFromPom(File pomFile)
+    private PluginClassLoader buildClassLoaderFromPom(File pomFile)
             throws Exception
     {
         List<Artifact> artifacts = resolver.resolvePom(pomFile);
-        URLClassLoader classLoader = createClassLoader(artifacts, pomFile.getPath());
+        PluginClassLoader classLoader = createClassLoader(artifacts, pomFile.getPath());
 
         Artifact artifact = artifacts.get(0);
         Set<String> plugins = discoverPlugins(artifact, classLoader);
@@ -297,7 +297,7 @@ public class PluginManager
         return classLoader;
     }
 
-    private URLClassLoader buildClassLoaderFromDirectory(File dir)
+    private PluginClassLoader buildClassLoaderFromDirectory(File dir)
             throws Exception
     {
         log.debug("Classpath for %s:", dir.getName());
@@ -309,7 +309,7 @@ public class PluginManager
         return createClassLoader(urls);
     }
 
-    private URLClassLoader buildClassLoaderFromCoordinates(String coordinates)
+    private PluginClassLoader buildClassLoaderFromCoordinates(String coordinates)
             throws Exception
     {
         Artifact rootArtifact = new DefaultArtifact(coordinates);
@@ -317,7 +317,7 @@ public class PluginManager
         return createClassLoader(artifacts, rootArtifact.toString());
     }
 
-    private URLClassLoader createClassLoader(List<Artifact> artifacts, String name)
+    private PluginClassLoader createClassLoader(List<Artifact> artifacts, String name)
             throws IOException
     {
         log.debug("Classpath for %s:", name);
@@ -333,7 +333,7 @@ public class PluginManager
         return createClassLoader(urls);
     }
 
-    private URLClassLoader createClassLoader(List<URL> urls)
+    private PluginClassLoader createClassLoader(List<URL> urls)
     {
         ClassLoader parent = getClass().getClassLoader();
         return new PluginClassLoader(urls, parent, SPI_PACKAGES);

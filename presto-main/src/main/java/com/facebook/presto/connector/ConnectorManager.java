@@ -33,6 +33,7 @@ import com.facebook.presto.metadata.HandleResolver;
 import com.facebook.presto.metadata.InternalNodeManager;
 import com.facebook.presto.metadata.MetadataManager;
 import com.facebook.presto.security.AccessControlManager;
+import com.facebook.presto.spi.ConnectorHandleResolver;
 import com.facebook.presto.spi.ConnectorId;
 import com.facebook.presto.spi.PageIndexerFactory;
 import com.facebook.presto.spi.PageSorter;
@@ -81,6 +82,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Supplier;
 
 import static com.facebook.presto.spi.ConnectorId.createInformationSchemaConnectorId;
 import static com.facebook.presto.spi.ConnectorId.createSystemTablesConnectorId;
@@ -119,7 +121,7 @@ public class ConnectorManager
     private final BlockEncodingSerde blockEncodingSerde;
 
     @GuardedBy("this")
-    private final ConcurrentMap<String, ConnectorFactory> connectorFactories = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, InternalConnectorFactory> connectorFactories = new ConcurrentHashMap<>();
 
     @GuardedBy("this")
     private final ConcurrentMap<ConnectorId, MaterializedConnector> connectors = new ConcurrentHashMap<>();
@@ -193,23 +195,24 @@ public class ConnectorManager
         }
     }
 
-    public synchronized void addConnectorFactory(ConnectorFactory connectorFactory)
+    public synchronized void addConnectorFactory(ConnectorFactory connectorFactory, Supplier<ClassLoader> duplicatePluginClassLoaderFactory)
     {
+        requireNonNull(connectorFactory, "connectorFactory is null");
+        requireNonNull(duplicatePluginClassLoaderFactory, "duplicatePluginClassLoaderFactory is null");
         checkState(!stopped.get(), "ConnectorManager is stopped");
-        ConnectorFactory existingConnectorFactory = connectorFactories.putIfAbsent(connectorFactory.getName(), connectorFactory);
+        InternalConnectorFactory existingConnectorFactory = connectorFactories.putIfAbsent(connectorFactory.getName(), new InternalConnectorFactory(connectorFactory, duplicatePluginClassLoaderFactory));
         checkArgument(existingConnectorFactory == null, "Connector %s is already registered", connectorFactory.getName());
-        handleResolver.addConnectorName(connectorFactory.getName(), connectorFactory.getHandleResolver());
     }
 
     public synchronized ConnectorId createConnection(String catalogName, String connectorName, Map<String, String> properties)
     {
         requireNonNull(connectorName, "connectorName is null");
-        ConnectorFactory connectorFactory = connectorFactories.get(connectorName);
+        InternalConnectorFactory connectorFactory = connectorFactories.get(connectorName);
         checkArgument(connectorFactory != null, "No factory for connector %s", connectorName);
         return createConnection(catalogName, connectorFactory, properties);
     }
 
-    private synchronized ConnectorId createConnection(String catalogName, ConnectorFactory connectorFactory, Map<String, String> properties)
+    private synchronized ConnectorId createConnection(String catalogName, InternalConnectorFactory connectorFactory, Map<String, String> properties)
     {
         checkState(!stopped.get(), "ConnectorManager is stopped");
         requireNonNull(catalogName, "catalogName is null");
@@ -225,10 +228,14 @@ public class ConnectorManager
         return connectorId;
     }
 
-    private synchronized void addCatalogConnector(String catalogName, ConnectorId connectorId, ConnectorFactory factory, Map<String, String> properties)
+    private synchronized void addCatalogConnector(String catalogName, ConnectorId connectorId, InternalConnectorFactory factory, Map<String, String> properties)
     {
         // create all connectors before adding, so a broken connector does not leave the system half updated
         MaterializedConnector connector = new MaterializedConnector(connectorId, createConnector(connectorId, factory, properties));
+
+        ConnectorHandleResolver connectorHandleResolver = connector.getConnector().getHandleResolver()
+                .orElseGet(factory.getConnectorFactory()::getHandleResolver);
+        checkArgument(connectorHandleResolver != null, "Connector %s does not have a handle resolver", factory);
 
         MaterializedConnector informationSchemaConnector = new MaterializedConnector(
                 createInformationSchemaConnectorId(connectorId),
@@ -267,8 +274,10 @@ public class ConnectorManager
             addConnectorInternal(informationSchemaConnector);
             addConnectorInternal(systemConnector);
             catalogManager.registerCatalog(catalog);
+            handleResolver.addConnectorName(catalogName, connectorHandleResolver);
         }
         catch (Throwable e) {
+            handleResolver.removeCatalogHandleResolver(catalogName);
             catalogManager.removeCatalog(catalog.getCatalogName());
             removeConnectorInternal(systemConnector.getConnectorId());
             removeConnectorInternal(informationSchemaConnector.getConnectorId());
@@ -325,6 +334,7 @@ public class ConnectorManager
             removeConnectorInternal(connectorId);
             removeConnectorInternal(createInformationSchemaConnectorId(connectorId));
             removeConnectorInternal(createSystemTablesConnectorId(connectorId));
+            handleResolver.removeCatalogHandleResolver(catalogName);
         });
     }
 
@@ -357,7 +367,7 @@ public class ConnectorManager
         }
     }
 
-    private Connector createConnector(ConnectorId connectorId, ConnectorFactory factory, Map<String, String> properties)
+    private Connector createConnector(ConnectorId connectorId, InternalConnectorFactory factory, Map<String, String> properties)
     {
         ConnectorContext context = new ConnectorContextInstance(
                 new ConnectorAwareNodeManager(nodeManager, nodeInfo.getEnvironment(), connectorId),
@@ -373,10 +383,39 @@ public class ConnectorManager
                         determinismEvaluator,
                         new RowExpressionFormatter(metadataManager.getFunctionAndTypeManager())),
                 new ConnectorFilterStatsCalculatorService(filterStatsCalculator),
-                blockEncodingSerde);
+                blockEncodingSerde,
+                factory.getDuplicatePluginClassLoaderFactory());
 
         try (ThreadContextClassLoader ignored = new ThreadContextClassLoader(factory.getClass().getClassLoader())) {
-            return factory.create(connectorId.getCatalogName(), properties, context);
+            return factory.getConnectorFactory().create(connectorId.getCatalogName(), properties, context);
+        }
+    }
+
+    private static class InternalConnectorFactory
+    {
+        private final ConnectorFactory connectorFactory;
+        private final Supplier<ClassLoader> duplicatePluginClassLoaderFactory;
+
+        public InternalConnectorFactory(ConnectorFactory connectorFactory, Supplier<ClassLoader> duplicatePluginClassLoaderFactory)
+        {
+            this.connectorFactory = connectorFactory;
+            this.duplicatePluginClassLoaderFactory = duplicatePluginClassLoaderFactory;
+        }
+
+        public ConnectorFactory getConnectorFactory()
+        {
+            return connectorFactory;
+        }
+
+        public Supplier<ClassLoader> getDuplicatePluginClassLoaderFactory()
+        {
+            return duplicatePluginClassLoaderFactory;
+        }
+
+        @Override
+        public String toString()
+        {
+            return connectorFactory.getName();
         }
     }
 
