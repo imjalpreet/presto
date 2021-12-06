@@ -13,34 +13,37 @@
  */
 package com.facebook.presto.hive;
 
+import com.facebook.presto.hive.metastore.ExtendedHiveMetastore;
 import com.facebook.presto.spi.ConnectorHandleResolver;
 import com.facebook.presto.spi.connector.Connector;
 import com.facebook.presto.spi.connector.ConnectorContext;
 import com.facebook.presto.spi.connector.ConnectorFactory;
 
-import java.lang.reflect.InvocationTargetException;
 import java.util.Map;
 import java.util.Optional;
 
-import static com.google.common.base.Preconditions.checkArgument;
-import static com.google.common.base.Strings.isNullOrEmpty;
-import static com.google.common.base.Throwables.throwIfUnchecked;
+import static com.facebook.presto.hive.InternalHiveConnectorFactory.createConnector;
+import static java.util.Objects.requireNonNull;
 
-public class HiveConnectorFactory
+public class TestingHiveConnectorFactory
         implements ConnectorFactory
 {
-    private final String name;
+    private final Optional<ExtendedHiveMetastore> metastore;
 
-    public HiveConnectorFactory(String name)
+    public TestingHiveConnectorFactory()
     {
-        checkArgument(!isNullOrEmpty(name), "name is null or empty");
-        this.name = name;
+        this.metastore = Optional.empty();
+    }
+
+    public TestingHiveConnectorFactory(ExtendedHiveMetastore metastore)
+    {
+        this.metastore = Optional.of(requireNonNull(metastore, "metastore is null"));
     }
 
     @Override
     public String getName()
     {
-        return name;
+        return "hive";
     }
 
     @Override
@@ -52,19 +55,6 @@ public class HiveConnectorFactory
     @Override
     public Connector create(String catalogName, Map<String, String> config, ConnectorContext context)
     {
-        ClassLoader classLoader = context.duplicatePluginClassLoader();
-        try {
-            return (Connector) classLoader.loadClass(InternalHiveConnectorFactory.class.getName())
-                    .getMethod("createConnector", String.class, Map.class, ConnectorContext.class, Optional.class)
-                    .invoke(null, catalogName, config, context, Optional.empty());
-        }
-        catch (InvocationTargetException e) {
-            Throwable targetException = e.getTargetException();
-            throwIfUnchecked(targetException);
-            throw new RuntimeException(targetException);
-        }
-        catch (ReflectiveOperationException e) {
-            throw new RuntimeException(e);
-        }
+        return createConnector(catalogName, config, context, metastore);
     }
 }

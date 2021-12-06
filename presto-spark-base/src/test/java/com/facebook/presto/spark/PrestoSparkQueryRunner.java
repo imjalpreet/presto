@@ -25,8 +25,8 @@ import com.facebook.presto.hive.HdfsConfigurationInitializer;
 import com.facebook.presto.hive.HdfsEnvironment;
 import com.facebook.presto.hive.HiveClientConfig;
 import com.facebook.presto.hive.HiveHdfsConfiguration;
-import com.facebook.presto.hive.HivePlugin;
 import com.facebook.presto.hive.MetastoreClientConfig;
+import com.facebook.presto.hive.TestingHivePlugin;
 import com.facebook.presto.hive.authentication.NoHdfsAuthentication;
 import com.facebook.presto.hive.metastore.Database;
 import com.facebook.presto.hive.metastore.ExtendedHiveMetastore;
@@ -270,8 +270,8 @@ public class PrestoSparkQueryRunner
 
         this.metastore = new FileHiveMetastore(hdfsEnvironment, baseDir.toURI().toString(), "test");
         metastore.createDatabase(METASTORE_CONTEXT, createDatabaseMetastoreObject("hive_test"));
-        Plugin hiveplugin = new HivePlugin("hive", Optional.of(metastore));
-        pluginManager.installPlugin(new HivePlugin("hive", Optional.of(metastore)), hiveplugin.getClass()::getClassLoader);
+        Plugin hiveplugin = new TestingHivePlugin(metastore);
+        pluginManager.installPlugin(hiveplugin, hiveplugin.getClass()::getClassLoader);
 
         connectorManager.createConnection("hive", "hive", ImmutableMap.of(
                 "hive.experimental-optimized-partition-update-serialization-enabled", "true"));

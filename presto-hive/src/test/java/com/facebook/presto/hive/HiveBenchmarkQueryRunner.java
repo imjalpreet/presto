@@ -26,7 +26,6 @@ import com.google.common.io.Files;
 import java.io.File;
 import java.io.IOException;
 import java.util.Map;
-import java.util.Optional;
 
 import static com.facebook.presto.hive.HiveQueryRunner.METASTORE_CONTEXT;
 import static com.facebook.presto.hive.TestHiveUtil.createTestingFileHiveMetastore;
@@ -75,16 +74,11 @@ public final class HiveBenchmarkQueryRunner
                 .setOwnerType(PrincipalType.ROLE)
                 .build());
 
-        HiveConnectorFactory hiveConnectorFactory = new HiveConnectorFactory(
-                "hive",
-                HiveBenchmarkQueryRunner.class.getClassLoader(),
-                Optional.of(metastore));
-
         Map<String, String> hiveCatalogConfig = ImmutableMap.<String, String>builder()
                 .put("hive.max-split-size", "10GB")
                 .build();
 
-        localQueryRunner.createCatalog("hive", hiveConnectorFactory, hiveCatalogConfig);
+        localQueryRunner.createCatalog("hive", new TestingHiveConnectorFactory(metastore), hiveCatalogConfig);
 
         localQueryRunner.execute("CREATE TABLE orders AS SELECT * FROM tpch.sf1.orders");
         localQueryRunner.execute("CREATE TABLE lineitem AS SELECT * FROM tpch.sf1.lineitem");
