@@ -19,8 +19,8 @@ import com.facebook.presto.hive.HdfsConfigurationInitializer;
 import com.facebook.presto.hive.HdfsEnvironment;
 import com.facebook.presto.hive.HiveClientConfig;
 import com.facebook.presto.hive.HiveHdfsConfiguration;
-import com.facebook.presto.hive.HivePlugin;
 import com.facebook.presto.hive.MetastoreClientConfig;
+import com.facebook.presto.hive.TestingHivePlugin;
 import com.facebook.presto.hive.authentication.NoHdfsAuthentication;
 import com.facebook.presto.hive.metastore.Database;
 import com.facebook.presto.hive.metastore.MetastoreContext;
@@ -107,7 +107,7 @@ public class TestSpatialJoins
                 .setOwnerName("public")
                 .setOwnerType(PrincipalType.ROLE)
                 .build());
-        queryRunner.installPlugin(new HivePlugin("hive", Optional.of(metastore)));
+        queryRunner.installPlugin(new TestingHivePlugin(metastore));
 
         queryRunner.createCatalog("hive", "hive");
         return queryRunner;

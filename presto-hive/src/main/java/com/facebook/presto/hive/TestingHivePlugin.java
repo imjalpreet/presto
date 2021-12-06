@@ -13,27 +13,26 @@
  */
 package com.facebook.presto.hive;
 
+import com.facebook.presto.hive.metastore.ExtendedHiveMetastore;
 import com.facebook.presto.spi.Plugin;
 import com.facebook.presto.spi.connector.ConnectorFactory;
 import com.google.common.collect.ImmutableList;
 
-import static com.google.common.base.Preconditions.checkArgument;
-import static com.google.common.base.Strings.isNullOrEmpty;
+import static java.util.Objects.requireNonNull;
 
-public class HivePlugin
+public class TestingHivePlugin
         implements Plugin
 {
-    private final String name;
+    private final ExtendedHiveMetastore metastore;
 
-    public HivePlugin(String name)
+    public TestingHivePlugin(ExtendedHiveMetastore metastore)
     {
-        checkArgument(!isNullOrEmpty(name), "name is null or empty");
-        this.name = name;
+        this.metastore = requireNonNull(metastore, "metastore is null");
     }
 
     @Override
     public Iterable<ConnectorFactory> getConnectorFactories()
     {
-        return ImmutableList.of(new HiveConnectorFactory(name));
+        return ImmutableList.of(new TestingHiveConnectorFactory(metastore));
     }
 }
