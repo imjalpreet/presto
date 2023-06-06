@@ -23,6 +23,11 @@ void to_json(json& j, const std::shared_ptr<ConnectorTableHandle>& p) {
     return;
   }
 
+  if (getConnectorKey(type) == "iceberg") {
+      j = *std::static_pointer_cast<IcebergTableHandle>(p);
+      return;
+  }
+
   if (getConnectorKey(type) == "tpch") {
     j = *std::static_pointer_cast<TpchTableHandle>(p);
     return;
@@ -45,6 +50,13 @@ void from_json(const json& j, std::shared_ptr<ConnectorTableHandle>& p) {
     j.get_to(*k);
     p = k;
     return;
+  }
+
+  if (getConnectorKey(type) == "iceberg") {
+      auto k = std::make_shared<IcebergTableHandle>();
+      j.get_to(*k);
+      p = k;
+      return;
   }
 
   if (getConnectorKey(type) == "tpch") {

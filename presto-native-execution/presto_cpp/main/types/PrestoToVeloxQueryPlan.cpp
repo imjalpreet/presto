@@ -116,6 +116,15 @@ std::shared_ptr<connector::ColumnHandle> toColumnHandle(
         toRequiredSubfields(hiveColumn->requiredSubfields));
   }
 
+  if (auto icebergColumn =
+          dynamic_cast<const protocol::IcebergColumnHandle*>(column)) {
+    return std::make_shared<connector::hive::HiveColumnHandle>(
+        icebergColumn->columnIdentity.name,
+        toHiveColumnType(icebergColumn->columnType),
+        stringToType(icebergColumn->type),
+        toRequiredSubfields(icebergColumn->requiredSubfields));
+  }
+
   if (auto tpchColumn =
           dynamic_cast<const protocol::TpchColumnHandle*>(column)) {
     return std::make_shared<connector::tpch::TpchColumnHandle>(

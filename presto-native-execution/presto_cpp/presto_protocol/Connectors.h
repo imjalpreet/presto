@@ -37,6 +37,8 @@ namespace facebook::presto::protocol {
 // Register known Hive connectors.
 void registerHiveConnectors();
 
+void registerIcebergConnector();
+
 // Register the Tpch connector.
 void registerTpchConnector();
 

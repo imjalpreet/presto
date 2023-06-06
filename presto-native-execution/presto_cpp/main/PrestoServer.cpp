@@ -193,6 +193,7 @@ void PrestoServer::run() {
   registerShuffleInterfaceFactories();
   registerCustomOperators();
   protocol::registerHiveConnectors();
+  protocol::registerIcebergConnector();
   protocol::registerTpchConnector();
 
   auto executor = std::make_shared<folly::IOThreadPoolExecutor>(
@@ -604,6 +605,10 @@ std::vector<std::string> PrestoServer::registerConnectors(
       PRESTO_STARTUP_LOG(INFO) << "Registering catalog " << catalogName
                                << " using connector " << connectorName;
 
+      // TODO: Temporary Change
+      if (connectorName == "iceberg") {
+        connectorName = "hive";
+      }
       std::shared_ptr<velox::connector::Connector> connector =
           facebook::velox::connector::getConnectorFactory(connectorName)
               ->newConnector(

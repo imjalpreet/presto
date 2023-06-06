@@ -42,6 +42,11 @@ bool unregisterConnector(const std::string& connectorName) {
 void registerHiveConnectors() {
   registerConnector("hive", "hive");
   registerConnector("hive-hadoop2", "hive");
+//  registerConnector("iceberg", "hive");
+}
+
+void registerIcebergConnector() {
+  registerConnector("iceberg", "iceberg");
 }
 
 void registerTpchConnector() {
