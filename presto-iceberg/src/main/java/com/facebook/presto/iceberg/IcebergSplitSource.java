@@ -120,24 +120,26 @@ public class IcebergSplitSource
                 ImmutableList.of(),
                 getPartitionKeys(task),
                 getNodeSelectionStrategy(session),
-                SplitWeight.fromProportion(Math.min(Math.max((double) task.length() / tableScan.targetSplitSize(), minimumAssignedSplitWeight), 1.0)));
+                SplitWeight.fromProportion(Math.min(Math.max((double) task.length() / tableScan.targetSplitSize(), minimumAssignedSplitWeight), 1.0)),
+                HiveTableOperations.PARQUET_STORAGE_FORMAT);
     }
 
-    private static Map<Integer, String> getPartitionKeys(FileScanTask scanTask)
+    private static Map<String, String> getPartitionKeys(FileScanTask scanTask)
     {
         StructLike partition = scanTask.file().partition();
         PartitionSpec spec = scanTask.spec();
         Map<PartitionField, Integer> fieldToIndex = getIdentityPartitions(spec);
-        Map<Integer, String> partitionKeys = new HashMap<>();
+        Map<String, String> partitionKeys = new HashMap<>();
 
         fieldToIndex.forEach((field, index) -> {
             int id = field.sourceId();
+            String name = field.name();
             Type type = spec.schema().findType(id);
             Class<?> javaClass = type.typeId().javaClass();
             Object value = partition.get(index, javaClass);
 
             if (value == null) {
-                partitionKeys.put(id, null);
+                partitionKeys.put(name, null);
             }
             else {
                 String partitionValue;
@@ -148,7 +150,7 @@ public class IcebergSplitSource
                 else {
                     partitionValue = value.toString();
                 }
-                partitionKeys.put(id, partitionValue);
+                partitionKeys.put(name, partitionValue);
             }
         });
 

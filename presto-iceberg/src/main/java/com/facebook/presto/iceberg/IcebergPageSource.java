@@ -65,7 +65,7 @@ public class IcebergPageSource
 
     public IcebergPageSource(
             List<IcebergColumnHandle> columns,
-            Map<Integer, String> partitionKeys,
+            Map<String, String> partitionKeys,
             ConnectorPageSource delegate,
             TimeZoneKey timeZoneKey)
     {
@@ -79,8 +79,8 @@ public class IcebergPageSource
         int outputIndex = 0;
         int delegateIndex = 0;
         for (IcebergColumnHandle column : columns) {
-            if (partitionKeys.containsKey(column.getId())) {
-                String partitionValue = partitionKeys.get(column.getId());
+            if (partitionKeys.containsKey(column.getName())) {
+                String partitionValue = partitionKeys.get(column.getName());
                 Type type = column.getType();
                 Object prefilledValue = deserializePartitionValue(type, partitionValue, column.getName(), timeZoneKey);
                 prefilledBlocks[outputIndex] = Utils.nativeValueToBlock(type, prefilledValue);

@@ -33,6 +33,9 @@ import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.CacheLoader;
 import com.google.common.cache.LoadingCache;
 import com.google.common.collect.ImmutableMultimap;
+import org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat;
+import org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat;
+import org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe;
 import org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe;
 import org.apache.hadoop.mapred.FileInputFormat;
 import org.apache.hadoop.mapred.FileOutputFormat;
@@ -95,6 +98,11 @@ public class HiveTableOperations
             LazySimpleSerDe.class.getName(),
             FileInputFormat.class.getName(),
             FileOutputFormat.class.getName());
+
+    public static final StorageFormat PARQUET_STORAGE_FORMAT = StorageFormat.create(
+            ParquetHiveSerDe.class.getName(),
+            MapredParquetInputFormat.class.getName(),
+            MapredParquetOutputFormat.class.getName());
 
     private final ExtendedHiveMetastore metastore;
     private final MetastoreContext metastoreContext;

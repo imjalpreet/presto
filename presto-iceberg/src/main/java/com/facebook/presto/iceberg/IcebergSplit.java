@@ -13,6 +13,7 @@
  */
 package com.facebook.presto.iceberg;
 
+import com.facebook.presto.hive.metastore.StorageFormat;
 import com.facebook.presto.spi.ConnectorSplit;
 import com.facebook.presto.spi.HostAddress;
 import com.facebook.presto.spi.NodeProvider;
@@ -40,9 +41,10 @@ public class IcebergSplit
     private final long length;
     private final FileFormat fileFormat;
     private final List<HostAddress> addresses;
-    private final Map<Integer, String> partitionKeys;
+    private final Map<String, String> partitionKeys;
     private final NodeSelectionStrategy nodeSelectionStrategy;
     private final SplitWeight splitWeight;
+    private final StorageFormat storage;
 
     @JsonCreator
     public IcebergSplit(
@@ -51,9 +53,10 @@ public class IcebergSplit
             @JsonProperty("length") long length,
             @JsonProperty("fileFormat") FileFormat fileFormat,
             @JsonProperty("addresses") List<HostAddress> addresses,
-            @JsonProperty("partitionKeys") Map<Integer, String> partitionKeys,
+            @JsonProperty("partitionKeys") Map<String, String> partitionKeys,
             @JsonProperty("nodeSelectionStrategy") NodeSelectionStrategy nodeSelectionStrategy,
-            @JsonProperty("splitWeight") SplitWeight splitWeight)
+            @JsonProperty("splitWeight") SplitWeight splitWeight,
+            @JsonProperty("storage") StorageFormat storage)
     {
         requireNonNull(nodeSelectionStrategy, "nodeSelectionStrategy is null");
         this.path = requireNonNull(path, "path is null");
@@ -64,6 +67,7 @@ public class IcebergSplit
         this.partitionKeys = Collections.unmodifiableMap(requireNonNull(partitionKeys, "partitionKeys is null"));
         this.nodeSelectionStrategy = nodeSelectionStrategy;
         this.splitWeight = requireNonNull(splitWeight, "splitWeight is null");
+        this.storage = storage;
     }
 
     @JsonProperty
@@ -97,7 +101,7 @@ public class IcebergSplit
     }
 
     @JsonProperty
-    public Map<Integer, String> getPartitionKeys()
+    public Map<String, String> getPartitionKeys()
     {
         return partitionKeys;
     }
@@ -122,6 +126,12 @@ public class IcebergSplit
     public SplitWeight getSplitWeight()
     {
         return splitWeight;
+    }
+
+    @JsonProperty
+    public StorageFormat getStorage()
+    {
+        return storage;
     }
 
     @Override
