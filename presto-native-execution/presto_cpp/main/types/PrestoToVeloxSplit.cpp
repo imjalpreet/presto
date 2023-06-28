@@ -77,6 +77,36 @@ velox::exec::Split toVeloxSplit(
             extraFileInfo),
         splitGroupId);
   }
+
+  if (auto icebergSplit = std::dynamic_pointer_cast<const protocol::IcebergSplit>(
+          connectorSplit)) {
+    std::unordered_map<std::string, std::optional<std::string>> partitionKeys;
+    for (const auto& entry : icebergSplit->partitionKeys) {
+      partitionKeys.emplace(
+          entry.first,
+          entry.second == "" ? std::nullopt
+                                  : std::optional<std::string>{entry.second});
+    }
+    std::unordered_map<std::string, std::string> customSplitInfo;
+
+    std::shared_ptr<std::string> extraFileInfo;
+
+    std::optional<int> tableBucketNumber;
+
+    return velox::exec::Split(
+        std::make_shared<connector::hive::HiveConnectorSplit>(
+            scheduledSplit.split.connectorId,
+            icebergSplit->path,
+            toVeloxFileFormat(icebergSplit->storage.inputFormat),
+            icebergSplit->start,
+            icebergSplit->length,
+            partitionKeys,
+            tableBucketNumber,
+            customSplitInfo,
+            extraFileInfo),
+        splitGroupId);
+  }
+
   if (auto remoteSplit = std::dynamic_pointer_cast<const protocol::RemoteSplit>(
           connectorSplit)) {
     return velox::exec::Split(

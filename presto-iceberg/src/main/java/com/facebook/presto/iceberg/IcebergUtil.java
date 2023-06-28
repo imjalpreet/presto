@@ -23,6 +23,7 @@ import com.facebook.presto.hive.metastore.MetastoreContext;
 import com.facebook.presto.spi.ConnectorSession;
 import com.facebook.presto.spi.PrestoException;
 import com.facebook.presto.spi.SchemaTableName;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import org.apache.iceberg.BaseTable;
 import org.apache.iceberg.FileFormat;
@@ -40,6 +41,7 @@ import org.apache.iceberg.io.LocationProvider;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.regex.Pattern;
 
@@ -85,6 +87,22 @@ public final class IcebergUtil
     public static Table getNativeIcebergTable(IcebergResourceFactory resourceFactory, ConnectorSession session, SchemaTableName table)
     {
         return resourceFactory.getCatalog(session).loadTable(toIcebergTableIdentifier(table));
+    }
+
+    public static List<IcebergColumnHandle> getPartitionKeyColumnHandles(org.apache.iceberg.Table table, TypeManager typeManager)
+    {
+        ImmutableList.Builder<IcebergColumnHandle> partitionColumns = ImmutableList.builder();
+        List<IcebergColumnHandle> allColumns = getColumns(table.schema(), typeManager);
+
+        for (int i = 0; i < table.spec().fields().size(); i++) {
+            PartitionField field = table.spec().fields().get(i);
+            if (field.transform().toString().equals("identity")) {
+                Optional<IcebergColumnHandle> columnHandle = allColumns.stream().filter(icebergColumnHandle -> Objects.equals(icebergColumnHandle.getName(), field.name())).findAny();
+                columnHandle.ifPresent(partitionColumns::add);
+            }
+        }
+
+        return partitionColumns.build();
     }
 
     public static long resolveSnapshotId(Table table, long snapshotId)
