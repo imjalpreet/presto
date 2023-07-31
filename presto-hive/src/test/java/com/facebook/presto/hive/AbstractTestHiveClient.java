@@ -68,6 +68,7 @@ import com.facebook.presto.hive.pagefile.PageFilePageSource;
 import com.facebook.presto.hive.parquet.ParquetPageSource;
 import com.facebook.presto.hive.rcfile.RcFilePageSource;
 import com.facebook.presto.hive.rule.HiveFilterPushdown;
+import com.facebook.presto.hive.util.FilterPushdownUtils.ConnectorPushdownFilterResult;
 import com.facebook.presto.metadata.MetadataManager;
 import com.facebook.presto.spi.ColumnHandle;
 import com.facebook.presto.spi.ColumnMetadata;
@@ -2288,7 +2289,7 @@ public abstract class AbstractTestHiveClient
         }
     }
 
-    private static HiveFilterPushdown.ConnectorPushdownFilterResult pushdownFilter(
+    private static ConnectorPushdownFilterResult pushdownFilter(
             ConnectorSession session,
             ConnectorMetadata metadata,
             SemiTransactionalHiveMetastore metastore,
