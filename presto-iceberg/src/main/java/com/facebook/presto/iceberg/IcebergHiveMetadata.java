@@ -14,11 +14,14 @@
 package com.facebook.presto.iceberg;
 
 import com.facebook.airlift.json.JsonCodec;
+import com.facebook.presto.common.Subfield;
 import com.facebook.presto.common.predicate.TupleDomain;
+import com.facebook.presto.common.type.Type;
 import com.facebook.presto.common.type.TypeManager;
 import com.facebook.presto.hive.HdfsContext;
 import com.facebook.presto.hive.HdfsEnvironment;
 import com.facebook.presto.hive.HiveColumnConverterProvider;
+import com.facebook.presto.hive.SubfieldExtractor;
 import com.facebook.presto.hive.TableAlreadyExistsException;
 import com.facebook.presto.hive.metastore.Database;
 import com.facebook.presto.hive.metastore.ExtendedHiveMetastore;
@@ -36,11 +39,16 @@ import com.facebook.presto.spi.ConnectorTableLayoutHandle;
 import com.facebook.presto.spi.ConnectorTableLayoutResult;
 import com.facebook.presto.spi.ConnectorTableMetadata;
 import com.facebook.presto.spi.Constraint;
+import com.facebook.presto.spi.DiscretePredicates;
 import com.facebook.presto.spi.PrestoException;
 import com.facebook.presto.spi.SchemaNotFoundException;
 import com.facebook.presto.spi.SchemaTableName;
 import com.facebook.presto.spi.SystemTable;
 import com.facebook.presto.spi.TableNotFoundException;
+import com.facebook.presto.spi.function.StandardFunctionResolution;
+import com.facebook.presto.spi.relation.RowExpression;
+import com.facebook.presto.spi.relation.RowExpressionService;
+import com.facebook.presto.spi.relation.SpecialFormExpression;
 import com.facebook.presto.spi.statistics.TableStatistics;
 import com.google.common.base.Functions;
 import com.google.common.base.Predicates;
@@ -83,6 +91,7 @@ import static com.facebook.presto.spi.StandardErrorCode.NOT_SUPPORTED;
 import static com.facebook.presto.spi.StandardErrorCode.SCHEMA_NOT_EMPTY;
 import static com.facebook.presto.spi.security.PrincipalType.USER;
 import static com.google.common.base.Verify.verify;
+import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.common.collect.ImmutableMap.toImmutableMap;
 import static com.google.common.collect.ImmutableSet.toImmutableSet;
 import static java.util.Objects.requireNonNull;
@@ -100,16 +109,22 @@ public class IcebergHiveMetadata
 {
     private final ExtendedHiveMetastore metastore;
     private final HdfsEnvironment hdfsEnvironment;
+    private final StandardFunctionResolution functionResolution;
+    private final RowExpressionService rowExpressionService;
 
     public IcebergHiveMetadata(
             ExtendedHiveMetastore metastore,
             HdfsEnvironment hdfsEnvironment,
             TypeManager typeManager,
+            StandardFunctionResolution functionResolution,
+            RowExpressionService rowExpressionService,
             JsonCodec<CommitTaskData> commitTaskCodec)
     {
         super(typeManager, commitTaskCodec);
         this.metastore = requireNonNull(metastore, "metastore is null");
         this.hdfsEnvironment = requireNonNull(hdfsEnvironment, "hdfsEnvironment is null");
+        this.functionResolution = requireNonNull(functionResolution, "functionResolution is null");
+        this.rowExpressionService = requireNonNull(rowExpressionService, "rowExpressionService is null");
     }
 
     @Override
@@ -117,6 +132,79 @@ public class IcebergHiveMetadata
     {
         MetastoreContext metastoreContext = new MetastoreContext(session.getIdentity(), session.getQueryId(), session.getClientInfo(), session.getSource(), Optional.empty(), false, HiveColumnConverterProvider.DEFAULT_COLUMN_CONVERTER_PROVIDER);
         return metastore.getAllDatabases(metastoreContext);
+    }
+
+    @Override
+    public ConnectorTableLayout getTableLayout(ConnectorSession session, ConnectorTableLayoutHandle handle)
+    {
+        IcebergTableLayoutHandle icebergTableLayoutHandle = (IcebergTableLayoutHandle) handle;
+
+        // TODO: Implement for partitioned tables
+        List<ColumnHandle> partitionColumns = ImmutableList.copyOf(icebergTableLayoutHandle.getPartitionColumns());
+
+        IcebergTableHandle tableHandle = icebergTableLayoutHandle.getTable();
+        IcebergTableName name = IcebergTableName.from((tableHandle).getTableName());
+        MetastoreContext metastoreContext = new MetastoreContext(session.getIdentity(), session.getQueryId(), session.getClientInfo(), session.getSource(), Optional.empty(), false, HiveColumnConverterProvider.DEFAULT_COLUMN_CONVERTER_PROVIDER);
+        Optional<Table> hiveTable = metastore.getTable(metastoreContext, tableHandle.getSchemaName(), name.getTableName());
+        if (!hiveTable.isPresent()) {
+            return null;
+        }
+        if (!isIcebergTable(hiveTable.get())) {
+            throw new UnknownTableTypeException(tableHandle.getSchemaTableName());
+        }
+
+        org.apache.iceberg.Table icebergTable = getHiveIcebergTable(metastore, hdfsEnvironment, session, tableHandle.getSchemaTableName());
+
+        Optional<DiscretePredicates> discretePredicates = Optional.empty();
+        if (!partitionColumns.isEmpty()) {
+            // TODO: Implement for partitioned tables
+        }
+
+        TupleDomain<ColumnHandle> predicate;
+        RowExpression subfieldPredicate;
+        if (icebergTableLayoutHandle.isPushdownFilterEnabled()) {
+            predicate = icebergTableLayoutHandle.getDomainPredicate()
+                    .transform(subfield -> isEntireColumn(subfield) ? subfield.getRootName() : null)
+                    .transform(icebergTableLayoutHandle.getPredicateColumns()::get)
+                    .transform(ColumnHandle.class::cast);
+
+            // capture subfields from domainPredicate to add to remainingPredicate
+            // so those filters don't get lost
+            Map<String, Type> columnTypes = getColumns(icebergTable.schema(), typeManager).stream()
+                    .collect(toImmutableMap(IcebergColumnHandle::getName, icebergColumnHandle -> getColumnMetadata(session, tableHandle, icebergColumnHandle).getType()));
+            SubfieldExtractor subfieldExtractor = new SubfieldExtractor(functionResolution, rowExpressionService.getExpressionOptimizer(), session);
+
+            subfieldPredicate = rowExpressionService.getDomainTranslator().toPredicate(
+                    icebergTableLayoutHandle.getDomainPredicate()
+                            .transform(subfield -> !isEntireColumn(subfield) ? subfield : null)
+                            .transform(subfield -> subfieldExtractor.toRowExpression(subfield, columnTypes.get(subfield.getRootName()))));
+        }
+        else {
+            // TODO: Need to implement, still incomplete
+            predicate = TupleDomain.none();
+            subfieldPredicate = TRUE_CONSTANT;
+        }
+
+        // combine subfieldPredicate with remainingPredicate
+        List<RowExpression> predicatesToCombine = ImmutableList.of(subfieldPredicate, icebergTableLayoutHandle.getRemainingPredicate()).stream()
+                .filter(p -> !p.equals(TRUE_CONSTANT))
+                .collect(toImmutableList());
+        RowExpression combinedRemainingPredicate = binaryExpression(SpecialFormExpression.Form.AND, predicatesToCombine);
+
+        return new ConnectorTableLayout(
+                icebergTableLayoutHandle,
+                Optional.empty(),
+                predicate,
+                Optional.empty(),
+                Optional.empty(),
+                discretePredicates,
+                ImmutableList.of(),
+                Optional.of(combinedRemainingPredicate));
+    }
+
+    private static boolean isEntireColumn(Subfield subfield)
+    {
+        return subfield.getPath().isEmpty();
     }
 
     @Override

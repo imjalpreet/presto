@@ -282,6 +282,12 @@ public abstract class IcebergAbstractMetadata
         throw new PrestoException(NOT_SUPPORTED, "This connector only supports delete where one or more partitions are deleted entirely");
     }
 
+    @Override
+    public boolean isLegacyGetLayoutSupported(ConnectorSession session, ConnectorTableHandle tableHandle)
+    {
+        return false;
+    }
+
     protected List<ColumnMetadata> getColumnMetadatas(org.apache.iceberg.Table table)
     {
         return table.schema().columns().stream()
