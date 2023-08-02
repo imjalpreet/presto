@@ -52,6 +52,7 @@ public class IcebergPlanOptimizerProvider
         requireNonNull(resourceFactory, "resourceFactory is null");
         requireNonNull(hdfsEnvironment, "hdfsEnvironment is null");
         this.planOptimizers = ImmutableSet.of(
+                new IcebergPlanOptimizer(functionResolution, rowExpressionService, typeManager),
                 new IcebergFilterPushdown(transactionManager, rowExpressionService, functionResolution, functionMetadataManager, resourceFactory, hdfsEnvironment, typeManager),
                 new IcebergParquetDereferencePushDown(transactionManager, rowExpressionService, typeManager));
     }

@@ -75,6 +75,7 @@ import static com.facebook.presto.expressions.LogicalRowExpressions.TRUE_CONSTAN
 import static com.facebook.presto.expressions.LogicalRowExpressions.binaryExpression;
 import static com.facebook.presto.hive.HiveMetadata.TABLE_COMMENT;
 import static com.facebook.presto.iceberg.IcebergSchemaProperties.getSchemaLocation;
+import static com.facebook.presto.iceberg.IcebergSessionProperties.getWorkerType;
 import static com.facebook.presto.iceberg.IcebergTableProperties.getFileFormat;
 import static com.facebook.presto.iceberg.IcebergTableProperties.getPartitioning;
 import static com.facebook.presto.iceberg.IcebergTableProperties.getTableLocation;
@@ -86,6 +87,7 @@ import static com.facebook.presto.iceberg.IcebergUtil.isIcebergTable;
 import static com.facebook.presto.iceberg.PartitionFields.parsePartitionFields;
 import static com.facebook.presto.iceberg.TableType.DATA;
 import static com.facebook.presto.iceberg.TypeConverter.toIcebergType;
+import static com.facebook.presto.iceberg.WorkerType.JAVA;
 import static com.facebook.presto.spi.StandardErrorCode.INVALID_SCHEMA_PROPERTY;
 import static com.facebook.presto.spi.StandardErrorCode.NOT_SUPPORTED;
 import static com.facebook.presto.spi.StandardErrorCode.SCHEMA_NOT_EMPTY;
@@ -137,6 +139,10 @@ public class IcebergHiveMetadata
     @Override
     public ConnectorTableLayout getTableLayout(ConnectorSession session, ConnectorTableLayoutHandle handle)
     {
+        if (getWorkerType(session).equals(JAVA)) {
+            return super.getTableLayout(session, handle);
+        }
+
         IcebergTableLayoutHandle icebergTableLayoutHandle = (IcebergTableLayoutHandle) handle;
 
         // TODO: Implement for partitioned tables
@@ -236,6 +242,10 @@ public class IcebergHiveMetadata
     @Override
     public List<ConnectorTableLayoutResult> getTableLayouts(ConnectorSession session, ConnectorTableHandle table, Constraint<ColumnHandle> constraint, Optional<Set<ColumnHandle>> desiredColumns)
     {
+        if (getWorkerType(session).equals(JAVA)) {
+            return super.getTableLayouts(session, table, constraint, desiredColumns);
+        }
+
         IcebergTableHandle handle = (IcebergTableHandle) table;
 
         IcebergTableName name = IcebergTableName.from(((IcebergTableHandle) table).getTableName());
