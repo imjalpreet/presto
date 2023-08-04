@@ -45,8 +45,7 @@ import com.facebook.presto.hive.metastore.HivePartitionMutator;
 import com.facebook.presto.hive.metastore.MetastoreCacheStats;
 import com.facebook.presto.hive.metastore.MetastoreConfig;
 import com.facebook.presto.iceberg.nessie.NessieConfig;
-import com.facebook.presto.iceberg.optimizer.IcebergParquetDereferencePushDown;
-import com.facebook.presto.iceberg.optimizer.IcebergPlanOptimizer;
+import com.facebook.presto.iceberg.optimizer.IcebergPlanOptimizerProvider;
 import com.facebook.presto.orc.CachingStripeMetadataSource;
 import com.facebook.presto.orc.DwrfAwareStripeMetadataSourceFactory;
 import com.facebook.presto.orc.EncryptionLibrary;
@@ -71,6 +70,7 @@ import com.facebook.presto.parquet.cache.ParquetMetadataSource;
 import com.facebook.presto.spi.connector.ConnectorNodePartitioningProvider;
 import com.facebook.presto.spi.connector.ConnectorPageSinkProvider;
 import com.facebook.presto.spi.connector.ConnectorPageSourceProvider;
+import com.facebook.presto.spi.connector.ConnectorPlanOptimizerProvider;
 import com.facebook.presto.spi.connector.ConnectorSplitManager;
 import com.facebook.presto.spi.procedure.Procedure;
 import com.google.common.cache.Cache;
@@ -172,8 +172,7 @@ public class IcebergModule
 
         configBinder(binder).bindConfig(ParquetCacheConfig.class, connectorId);
 
-        binder.bind(IcebergPlanOptimizer.class).in(Scopes.SINGLETON);
-        binder.bind(IcebergParquetDereferencePushDown.class).in(Scopes.SINGLETON);
+        binder.bind(ConnectorPlanOptimizerProvider.class).to(IcebergPlanOptimizerProvider.class).in(Scopes.SINGLETON);
     }
 
     @ForCachingHiveMetastore

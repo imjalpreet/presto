@@ -20,9 +20,7 @@ import com.facebook.presto.spi.ConnectorTableLayoutHandle;
 import com.facebook.presto.spi.relation.RowExpression;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
-import com.google.common.collect.ImmutableList;
 
-import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -33,43 +31,31 @@ import static java.util.Objects.requireNonNull;
 public class IcebergTableLayoutHandle
         implements ConnectorTableLayoutHandle
 {
-    private final List<IcebergColumnHandle> partitionColumns;
     private final boolean pushdownFilterEnabled;
     private final TupleDomain<Subfield> domainPredicate;
     private final RowExpression remainingPredicate;
     private final Map<String, IcebergColumnHandle> predicateColumns;
-    private final TupleDomain<ColumnHandle> partitionColumnPredicate;
     private final Optional<Set<IcebergColumnHandle>> requestedColumns;
     private final IcebergTableHandle table;
     private final TupleDomain<ColumnHandle> tupleDomain;
 
     @JsonCreator
     public IcebergTableLayoutHandle(
-            @JsonProperty("partitionColumns") List<IcebergColumnHandle> partitionColumns,
             @JsonProperty("domainPredicate") TupleDomain<Subfield> domainPredicate,
             @JsonProperty("remainingPredicate") RowExpression remainingPredicate,
             @JsonProperty("predicateColumns") Map<String, IcebergColumnHandle> predicateColumns,
-            @JsonProperty("partitionColumnPredicate") TupleDomain<ColumnHandle> partitionColumnPredicate,
             @JsonProperty("requestedColumns") Optional<Set<IcebergColumnHandle>> requestedColumns,
             @JsonProperty("pushdownFilterEnabled") boolean pushdownFilterEnabled,
             @JsonProperty("table") IcebergTableHandle table,
             @JsonProperty("tupleDomain") TupleDomain<ColumnHandle> domain)
     {
-        this.partitionColumns = ImmutableList.copyOf(requireNonNull(partitionColumns, "partitionColumns is null"));
         this.domainPredicate = requireNonNull(domainPredicate, "domainPredicate is null");
         this.remainingPredicate = requireNonNull(remainingPredicate, "remainingPredicate is null");
         this.predicateColumns = requireNonNull(predicateColumns, "predicateColumns is null");
-        this.partitionColumnPredicate = requireNonNull(partitionColumnPredicate, "partitionColumnPredicate is null");
         this.requestedColumns = requireNonNull(requestedColumns, "requestedColumns is null");
         this.pushdownFilterEnabled = pushdownFilterEnabled;
         this.table = requireNonNull(table, "table is null");
         this.tupleDomain = requireNonNull(domain, "tupleDomain is null");
-    }
-
-    @JsonProperty
-    public List<IcebergColumnHandle> getPartitionColumns()
-    {
-        return partitionColumns;
     }
 
     @JsonProperty
@@ -88,12 +74,6 @@ public class IcebergTableLayoutHandle
     public Map<String, IcebergColumnHandle> getPredicateColumns()
     {
         return predicateColumns;
-    }
-
-    @JsonProperty
-    public TupleDomain<ColumnHandle> getPartitionColumnPredicate()
-    {
-        return partitionColumnPredicate;
     }
 
     @JsonProperty
@@ -130,11 +110,9 @@ public class IcebergTableLayoutHandle
             return false;
         }
         IcebergTableLayoutHandle that = (IcebergTableLayoutHandle) o;
-        return Objects.equals(partitionColumns, that.partitionColumns) &&
-                Objects.equals(domainPredicate, that.domainPredicate) &&
+        return Objects.equals(domainPredicate, that.domainPredicate) &&
                 Objects.equals(remainingPredicate, that.remainingPredicate) &&
                 Objects.equals(predicateColumns, that.predicateColumns) &&
-                Objects.equals(partitionColumnPredicate, that.partitionColumnPredicate) &&
                 Objects.equals(requestedColumns, that.requestedColumns) &&
                 Objects.equals(pushdownFilterEnabled, that.pushdownFilterEnabled) &&
                 Objects.equals(table, that.table) &&
@@ -144,7 +122,7 @@ public class IcebergTableLayoutHandle
     @Override
     public int hashCode()
     {
-        return Objects.hash(partitionColumns, domainPredicate, remainingPredicate, predicateColumns, partitionColumnPredicate, requestedColumns, pushdownFilterEnabled, table, tupleDomain);
+        return Objects.hash(domainPredicate, remainingPredicate, predicateColumns, requestedColumns, pushdownFilterEnabled, table, tupleDomain);
     }
 
     @Override
