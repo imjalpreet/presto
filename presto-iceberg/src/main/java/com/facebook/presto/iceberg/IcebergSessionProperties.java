@@ -78,6 +78,7 @@ public final class IcebergSessionProperties
     private static final String NESSIE_REFERENCE_HASH = "nessie_reference_hash";
     public static final String READ_MASKED_VALUE_ENABLED = "read_null_masked_parquet_encrypted_value_enabled";
     public static final String PARQUET_DEREFERENCE_PUSHDOWN_ENABLED = "parquet_dereference_pushdown_enabled";
+    public static final String WORKER_TYPE = "worker_type";
     private final List<PropertyMetadata<?>> sessionProperties;
 
     @Inject
@@ -273,7 +274,16 @@ public final class IcebergSessionProperties
                         PARQUET_DEREFERENCE_PUSHDOWN_ENABLED,
                         "Is dereference pushdown expression pushdown into Parquet reader enabled?",
                         icebergConfig.isParquetDereferencePushdownEnabled(),
-                        false));
+                        false),
+                new PropertyMetadata<>(
+                        WORKER_TYPE,
+                        "Type of worker used for execution",
+                        VARCHAR,
+                        WorkerType.class,
+                        icebergConfig.getWorkerType(),
+                        false,
+                        value -> WorkerType.valueOf((String) value),
+                        WorkerType::toString));
     }
 
     public List<PropertyMetadata<?>> getSessionProperties()
@@ -444,5 +454,10 @@ public final class IcebergSessionProperties
     public static boolean isParquetDereferencePushdownEnabled(ConnectorSession session)
     {
         return session.getProperty(PARQUET_DEREFERENCE_PUSHDOWN_ENABLED, Boolean.class);
+    }
+
+    public static WorkerType getWorkerType(ConnectorSession session)
+    {
+        return session.getProperty(WORKER_TYPE, WorkerType.class);
     }
 }

@@ -30,6 +30,7 @@ import java.util.List;
 import static com.facebook.presto.hive.HiveCompressionCodec.GZIP;
 import static com.facebook.presto.iceberg.CatalogType.HIVE;
 import static com.facebook.presto.iceberg.IcebergFileFormat.PARQUET;
+import static com.facebook.presto.iceberg.WorkerType.JAVA;
 
 public class IcebergConfig
 {
@@ -42,6 +43,7 @@ public class IcebergConfig
     private List<String> hadoopConfigResources = ImmutableList.of();
     private double minimumAssignedSplitWeight = 0.05;
     private boolean parquetDereferencePushdownEnabled = true;
+    private WorkerType workerType = JAVA;
 
     @NotNull
     public FileFormat getFileFormat()
@@ -165,5 +167,19 @@ public class IcebergConfig
     public boolean isParquetDereferencePushdownEnabled()
     {
         return parquetDereferencePushdownEnabled;
+    }
+
+    @NotNull
+    public WorkerType getWorkerType()
+    {
+        return workerType;
+    }
+
+    @Config("iceberg.execution.worker.type")
+    @ConfigDescription("Type of worker used for execution. Possible values can be JAVA or NATIVE")
+    public IcebergConfig setWorkerType(WorkerType workerType)
+    {
+        this.workerType = workerType;
+        return this;
     }
 }
