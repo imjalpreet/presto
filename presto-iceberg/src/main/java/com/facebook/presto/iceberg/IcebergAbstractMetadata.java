@@ -15,6 +15,7 @@ package com.facebook.presto.iceberg;
 
 import com.facebook.airlift.json.JsonCodec;
 import com.facebook.airlift.log.Logger;
+import com.facebook.presto.common.Subfield;
 import com.facebook.presto.common.predicate.TupleDomain;
 import com.facebook.presto.common.type.TypeManager;
 import com.facebook.presto.hive.HiveWrittenPartitions;
@@ -38,6 +39,7 @@ import com.facebook.presto.spi.TableNotFoundException;
 import com.facebook.presto.spi.connector.ConnectorMetadata;
 import com.facebook.presto.spi.connector.ConnectorOutputMetadata;
 import com.facebook.presto.spi.statistics.ComputedStatistics;
+import com.google.common.base.Functions;
 import com.google.common.base.VerifyException;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -65,6 +67,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static com.facebook.presto.common.type.BigintType.BIGINT;
 import static com.facebook.presto.expressions.LogicalRowExpressions.TRUE_CONSTANT;
 import static com.facebook.presto.iceberg.IcebergColumnHandle.primitiveIcebergColumnHandle;
+import static com.facebook.presto.iceberg.IcebergSessionProperties.getWorkerType;
 import static com.facebook.presto.iceberg.IcebergTableProperties.FILE_FORMAT_PROPERTY;
 import static com.facebook.presto.iceberg.IcebergTableProperties.FORMAT_VERSION;
 import static com.facebook.presto.iceberg.IcebergTableProperties.LOCATION_PROPERTY;
@@ -75,9 +78,11 @@ import static com.facebook.presto.iceberg.IcebergUtil.resolveSnapshotIdByName;
 import static com.facebook.presto.iceberg.PartitionFields.toPartitionFields;
 import static com.facebook.presto.iceberg.TypeConverter.toIcebergType;
 import static com.facebook.presto.iceberg.TypeConverter.toPrestoType;
+import static com.facebook.presto.iceberg.WorkerType.NATIVE;
 import static com.facebook.presto.spi.StandardErrorCode.NOT_SUPPORTED;
 import static com.google.common.collect.ImmutableList.toImmutableList;
-import static java.util.Collections.emptyList;
+import static com.google.common.collect.ImmutableMap.toImmutableMap;
+import static com.google.common.collect.ImmutableSet.toImmutableSet;
 import static java.util.Collections.emptyMap;
 import static java.util.Collections.singletonList;
 import static java.util.Objects.requireNonNull;
@@ -104,8 +109,24 @@ public abstract class IcebergAbstractMetadata
     public List<ConnectorTableLayoutResult> getTableLayouts(ConnectorSession session, ConnectorTableHandle table, Constraint<ColumnHandle> constraint, Optional<Set<ColumnHandle>> desiredColumns)
     {
         IcebergTableHandle handle = (IcebergTableHandle) table;
-        ConnectorTableLayout layout = new ConnectorTableLayout(new IcebergTableLayoutHandle(emptyList(), TupleDomain.all(), TRUE_CONSTANT, emptyMap(), TupleDomain.all(), Optional.empty(), true, handle, constraint.getSummary()));
+        ConnectorTableLayout layout;
+        if (getWorkerType(session).equals(NATIVE)) {
+            Optional<Set<IcebergColumnHandle>> requestedColumns = desiredColumns.map(columns -> columns.stream().map(column -> (IcebergColumnHandle) column).collect(toImmutableSet()));
+            Map<String, IcebergColumnHandle> predicateColumns = constraint.getSummary().getDomains().get().keySet().stream()
+                    .map(IcebergColumnHandle.class::cast)
+                    .collect(toImmutableMap(IcebergColumnHandle::getName, Functions.identity()));
+            layout = new ConnectorTableLayout(new IcebergTableLayoutHandle(constraint.getSummary().transform(IcebergAbstractMetadata::toSubfield), TRUE_CONSTANT, predicateColumns, requestedColumns, true, handle, TupleDomain.all()));
+        }
+        else {
+            // In the case of Java Worker, all the new parameters are inconsequential
+            layout = new ConnectorTableLayout(new IcebergTableLayoutHandle(TupleDomain.all(), TRUE_CONSTANT, emptyMap(), Optional.empty(), true, handle, constraint.getSummary()));
+        }
         return ImmutableList.of(new ConnectorTableLayoutResult(layout, constraint.getSummary()));
+    }
+
+    public static Subfield toSubfield(ColumnHandle columnHandle)
+    {
+        return new Subfield(((IcebergColumnHandle) columnHandle).getName(), ImmutableList.of());
     }
 
     @Override
@@ -271,6 +292,12 @@ public abstract class IcebergAbstractMetadata
     public ConnectorTableHandle beginDelete(ConnectorSession session, ConnectorTableHandle tableHandle)
     {
         throw new PrestoException(NOT_SUPPORTED, "This connector only supports delete where one or more partitions are deleted entirely");
+    }
+
+    @Override
+    public boolean isLegacyGetLayoutSupported(ConnectorSession session, ConnectorTableHandle tableHandle)
+    {
+        return !getWorkerType(session).equals(NATIVE);
     }
 
     protected List<ColumnMetadata> getColumnMetadatas(org.apache.iceberg.Table table)

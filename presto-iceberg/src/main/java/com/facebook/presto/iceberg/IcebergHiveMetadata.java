@@ -14,11 +14,14 @@
 package com.facebook.presto.iceberg;
 
 import com.facebook.airlift.json.JsonCodec;
+import com.facebook.presto.common.Subfield;
 import com.facebook.presto.common.predicate.TupleDomain;
+import com.facebook.presto.common.type.Type;
 import com.facebook.presto.common.type.TypeManager;
 import com.facebook.presto.hive.HdfsContext;
 import com.facebook.presto.hive.HdfsEnvironment;
 import com.facebook.presto.hive.HiveColumnConverterProvider;
+import com.facebook.presto.hive.SubfieldExtractor;
 import com.facebook.presto.hive.TableAlreadyExistsException;
 import com.facebook.presto.hive.metastore.Database;
 import com.facebook.presto.hive.metastore.ExtendedHiveMetastore;
@@ -31,15 +34,24 @@ import com.facebook.presto.spi.ConnectorNewTableLayout;
 import com.facebook.presto.spi.ConnectorOutputTableHandle;
 import com.facebook.presto.spi.ConnectorSession;
 import com.facebook.presto.spi.ConnectorTableHandle;
+import com.facebook.presto.spi.ConnectorTableLayout;
 import com.facebook.presto.spi.ConnectorTableLayoutHandle;
+import com.facebook.presto.spi.ConnectorTableLayoutResult;
 import com.facebook.presto.spi.ConnectorTableMetadata;
 import com.facebook.presto.spi.Constraint;
+import com.facebook.presto.spi.DiscretePredicates;
 import com.facebook.presto.spi.PrestoException;
 import com.facebook.presto.spi.SchemaNotFoundException;
 import com.facebook.presto.spi.SchemaTableName;
 import com.facebook.presto.spi.SystemTable;
 import com.facebook.presto.spi.TableNotFoundException;
+import com.facebook.presto.spi.function.StandardFunctionResolution;
+import com.facebook.presto.spi.relation.RowExpression;
+import com.facebook.presto.spi.relation.RowExpressionService;
+import com.facebook.presto.spi.relation.SpecialFormExpression;
 import com.facebook.presto.spi.statistics.TableStatistics;
+import com.google.common.base.Functions;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import org.apache.hadoop.fs.Path;
 import org.apache.iceberg.FileFormat;
@@ -55,9 +67,13 @@ import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
+import static com.facebook.presto.expressions.LogicalRowExpressions.TRUE_CONSTANT;
+import static com.facebook.presto.expressions.LogicalRowExpressions.binaryExpression;
 import static com.facebook.presto.hive.HiveMetadata.TABLE_COMMENT;
 import static com.facebook.presto.iceberg.IcebergSchemaProperties.getSchemaLocation;
+import static com.facebook.presto.iceberg.IcebergSessionProperties.getWorkerType;
 import static com.facebook.presto.iceberg.IcebergTableProperties.getFileFormat;
 import static com.facebook.presto.iceberg.IcebergTableProperties.getFormatVersion;
 import static com.facebook.presto.iceberg.IcebergTableProperties.getPartitioning;
@@ -69,12 +85,15 @@ import static com.facebook.presto.iceberg.IcebergUtil.isIcebergTable;
 import static com.facebook.presto.iceberg.PartitionFields.parsePartitionFields;
 import static com.facebook.presto.iceberg.TableType.DATA;
 import static com.facebook.presto.iceberg.TypeConverter.toIcebergType;
+import static com.facebook.presto.iceberg.WorkerType.JAVA;
 import static com.facebook.presto.spi.StandardErrorCode.INVALID_SCHEMA_PROPERTY;
 import static com.facebook.presto.spi.StandardErrorCode.NOT_SUPPORTED;
 import static com.facebook.presto.spi.StandardErrorCode.SCHEMA_NOT_EMPTY;
 import static com.facebook.presto.spi.security.PrincipalType.USER;
 import static com.google.common.base.Verify.verify;
+import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.common.collect.ImmutableMap.toImmutableMap;
+import static com.google.common.collect.ImmutableSet.toImmutableSet;
 import static java.util.Objects.requireNonNull;
 import static java.util.function.Function.identity;
 import static java.util.stream.Collectors.toList;
@@ -91,16 +110,22 @@ public class IcebergHiveMetadata
 {
     private final ExtendedHiveMetastore metastore;
     private final HdfsEnvironment hdfsEnvironment;
+    private final StandardFunctionResolution functionResolution;
+    private final RowExpressionService rowExpressionService;
 
     public IcebergHiveMetadata(
             ExtendedHiveMetastore metastore,
             HdfsEnvironment hdfsEnvironment,
             TypeManager typeManager,
+            StandardFunctionResolution functionResolution,
+            RowExpressionService rowExpressionService,
             JsonCodec<CommitTaskData> commitTaskCodec)
     {
         super(typeManager, commitTaskCodec);
         this.metastore = requireNonNull(metastore, "metastore is null");
         this.hdfsEnvironment = requireNonNull(hdfsEnvironment, "hdfsEnvironment is null");
+        this.functionResolution = requireNonNull(functionResolution, "functionResolution is null");
+        this.rowExpressionService = requireNonNull(rowExpressionService, "rowExpressionService is null");
     }
 
     @Override
@@ -108,6 +133,77 @@ public class IcebergHiveMetadata
     {
         MetastoreContext metastoreContext = new MetastoreContext(session.getIdentity(), session.getQueryId(), session.getClientInfo(), session.getSource(), Optional.empty(), false, HiveColumnConverterProvider.DEFAULT_COLUMN_CONVERTER_PROVIDER);
         return metastore.getAllDatabases(metastoreContext);
+    }
+
+    @Override
+    public ConnectorTableLayout getTableLayout(ConnectorSession session, ConnectorTableLayoutHandle handle)
+    {
+        if (getWorkerType(session).equals(JAVA)) {
+            return super.getTableLayout(session, handle);
+        }
+
+        IcebergTableLayoutHandle icebergTableLayoutHandle = (IcebergTableLayoutHandle) handle;
+
+        IcebergTableHandle tableHandle = icebergTableLayoutHandle.getTable();
+        IcebergTableName name = IcebergTableName.from((tableHandle).getTableName());
+        MetastoreContext metastoreContext = new MetastoreContext(session.getIdentity(), session.getQueryId(), session.getClientInfo(), session.getSource(), Optional.empty(), false, HiveColumnConverterProvider.DEFAULT_COLUMN_CONVERTER_PROVIDER);
+        Optional<Table> hiveTable = metastore.getTable(metastoreContext, tableHandle.getSchemaName(), name.getTableName());
+        if (!hiveTable.isPresent()) {
+            return null;
+        }
+        if (!isIcebergTable(hiveTable.get())) {
+            throw new UnknownTableTypeException(tableHandle.getSchemaTableName());
+        }
+
+        org.apache.iceberg.Table icebergTable = getHiveIcebergTable(metastore, hdfsEnvironment, session, tableHandle.getSchemaTableName());
+
+        Optional<DiscretePredicates> discretePredicates = Optional.empty();
+
+        TupleDomain<ColumnHandle> predicate;
+        RowExpression subfieldPredicate;
+        if (icebergTableLayoutHandle.isPushdownFilterEnabled()) {
+            predicate = icebergTableLayoutHandle.getDomainPredicate()
+                    .transform(subfield -> isEntireColumn(subfield) ? subfield.getRootName() : null)
+                    .transform(icebergTableLayoutHandle.getPredicateColumns()::get)
+                    .transform(ColumnHandle.class::cast);
+
+            // capture subfields from domainPredicate to add to remainingPredicate
+            // so those filters don't get lost
+            Map<String, Type> columnTypes = getColumns(icebergTable.schema(), typeManager).stream()
+                    .collect(toImmutableMap(IcebergColumnHandle::getName, icebergColumnHandle -> getColumnMetadata(session, tableHandle, icebergColumnHandle).getType()));
+            SubfieldExtractor subfieldExtractor = new SubfieldExtractor(functionResolution, rowExpressionService.getExpressionOptimizer(), session);
+
+            subfieldPredicate = rowExpressionService.getDomainTranslator().toPredicate(
+                    icebergTableLayoutHandle.getDomainPredicate()
+                            .transform(subfield -> !isEntireColumn(subfield) ? subfield : null)
+                            .transform(subfield -> subfieldExtractor.toRowExpression(subfield, columnTypes.get(subfield.getRootName()))));
+        }
+        else {
+            // TODO: Need to implement, still incomplete
+            predicate = TupleDomain.none();
+            subfieldPredicate = TRUE_CONSTANT;
+        }
+
+        // combine subfieldPredicate with remainingPredicate
+        List<RowExpression> predicatesToCombine = ImmutableList.of(subfieldPredicate, icebergTableLayoutHandle.getRemainingPredicate()).stream()
+                .filter(p -> !p.equals(TRUE_CONSTANT))
+                .collect(toImmutableList());
+        RowExpression combinedRemainingPredicate = binaryExpression(SpecialFormExpression.Form.AND, predicatesToCombine);
+
+        return new ConnectorTableLayout(
+                icebergTableLayoutHandle,
+                Optional.empty(),
+                predicate,
+                Optional.empty(),
+                Optional.empty(),
+                discretePredicates,
+                ImmutableList.of(),
+                Optional.of(combinedRemainingPredicate));
+    }
+
+    private static boolean isEntireColumn(Subfield subfield)
+    {
+        return subfield.getPath().isEmpty();
     }
 
     @Override
@@ -134,6 +230,38 @@ public class IcebergHiveMetadata
                 name.getTableType(),
                 snapshotId,
                 TupleDomain.all());
+    }
+
+    @Override
+    public List<ConnectorTableLayoutResult> getTableLayouts(ConnectorSession session, ConnectorTableHandle table, Constraint<ColumnHandle> constraint, Optional<Set<ColumnHandle>> desiredColumns)
+    {
+        if (getWorkerType(session).equals(JAVA)) {
+            return super.getTableLayouts(session, table, constraint, desiredColumns);
+        }
+
+        IcebergTableHandle handle = (IcebergTableHandle) table;
+
+        IcebergTableName name = IcebergTableName.from(((IcebergTableHandle) table).getTableName());
+        verify(name.getTableType() == DATA, "Wrong table type: " + name.getTableType());
+
+        MetastoreContext metastoreContext = new MetastoreContext(session.getIdentity(), session.getQueryId(), session.getClientInfo(), session.getSource(), Optional.empty(), false, HiveColumnConverterProvider.DEFAULT_COLUMN_CONVERTER_PROVIDER);
+        Optional<Table> hiveTable = metastore.getTable(metastoreContext, ((IcebergTableHandle) table).getSchemaName(), name.getTableName());
+        if (!hiveTable.isPresent()) {
+            return null;
+        }
+        if (!isIcebergTable(hiveTable.get())) {
+            throw new UnknownTableTypeException(((IcebergTableHandle) table).getSchemaTableName());
+        }
+
+        org.apache.iceberg.Table icebergTable = getHiveIcebergTable(metastore, hdfsEnvironment, session, ((IcebergTableHandle) table).getSchemaTableName());
+
+        Map<String, IcebergColumnHandle> predicateColumns = constraint.getSummary().getDomains().get().keySet().stream()
+                .map(IcebergColumnHandle.class::cast)
+                .collect(toImmutableMap(IcebergColumnHandle::getName, Functions.identity()));
+
+        Optional<Set<IcebergColumnHandle>> requestedColumns = desiredColumns.map(columns -> columns.stream().map(column -> (IcebergColumnHandle) column).collect(toImmutableSet()));
+        ConnectorTableLayout layout = getTableLayout(session, new IcebergTableLayoutHandle(constraint.getSummary().transform(IcebergAbstractMetadata::toSubfield), TRUE_CONSTANT, predicateColumns, requestedColumns, true, handle, TupleDomain.all()));
+        return ImmutableList.of(new ConnectorTableLayoutResult(layout, constraint.getSummary()));
     }
 
     @Override
