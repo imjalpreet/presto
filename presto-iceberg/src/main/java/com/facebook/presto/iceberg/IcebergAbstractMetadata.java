@@ -15,6 +15,7 @@ package com.facebook.presto.iceberg;
 
 import com.facebook.airlift.json.JsonCodec;
 import com.facebook.airlift.log.Logger;
+import com.facebook.presto.common.predicate.TupleDomain;
 import com.facebook.presto.common.type.TypeManager;
 import com.facebook.presto.hive.HiveWrittenPartitions;
 import com.facebook.presto.spi.ColumnHandle;
@@ -62,6 +63,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static com.facebook.presto.common.type.BigintType.BIGINT;
+import static com.facebook.presto.expressions.LogicalRowExpressions.TRUE_CONSTANT;
 import static com.facebook.presto.iceberg.IcebergColumnHandle.primitiveIcebergColumnHandle;
 import static com.facebook.presto.iceberg.IcebergTableProperties.FILE_FORMAT_PROPERTY;
 import static com.facebook.presto.iceberg.IcebergTableProperties.FORMAT_VERSION;
@@ -75,6 +77,8 @@ import static com.facebook.presto.iceberg.TypeConverter.toIcebergType;
 import static com.facebook.presto.iceberg.TypeConverter.toPrestoType;
 import static com.facebook.presto.spi.StandardErrorCode.NOT_SUPPORTED;
 import static com.google.common.collect.ImmutableList.toImmutableList;
+import static java.util.Collections.emptyList;
+import static java.util.Collections.emptyMap;
 import static java.util.Collections.singletonList;
 import static java.util.Objects.requireNonNull;
 
@@ -100,7 +104,7 @@ public abstract class IcebergAbstractMetadata
     public List<ConnectorTableLayoutResult> getTableLayouts(ConnectorSession session, ConnectorTableHandle table, Constraint<ColumnHandle> constraint, Optional<Set<ColumnHandle>> desiredColumns)
     {
         IcebergTableHandle handle = (IcebergTableHandle) table;
-        ConnectorTableLayout layout = new ConnectorTableLayout(new IcebergTableLayoutHandle(handle, constraint.getSummary()));
+        ConnectorTableLayout layout = new ConnectorTableLayout(new IcebergTableLayoutHandle(emptyList(), TupleDomain.all(), TRUE_CONSTANT, emptyMap(), TupleDomain.all(), Optional.empty(), true, handle, constraint.getSummary()));
         return ImmutableList.of(new ConnectorTableLayoutResult(layout, constraint.getSummary()));
     }
 
