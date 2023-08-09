@@ -38,6 +38,7 @@ import org.apache.iceberg.TableScan;
 import org.apache.iceberg.expressions.Expression;
 import org.apache.iceberg.io.LocationProvider;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -46,6 +47,8 @@ import java.util.Optional;
 import java.util.regex.Pattern;
 
 import static com.facebook.presto.hive.HiveMetadata.TABLE_COMMENT;
+import static com.facebook.presto.iceberg.IcebergColumnHandle.ColumnType.PARTITION_KEY;
+import static com.facebook.presto.iceberg.IcebergColumnHandle.ColumnType.REGULAR;
 import static com.facebook.presto.iceberg.IcebergErrorCode.ICEBERG_INVALID_SNAPSHOT_ID;
 import static com.facebook.presto.iceberg.util.IcebergPrestoModelConverters.toIcebergTableIdentifier;
 import static com.facebook.presto.spi.StandardErrorCode.NOT_SUPPORTED;
@@ -92,7 +95,7 @@ public final class IcebergUtil
     public static List<IcebergColumnHandle> getPartitionKeyColumnHandles(org.apache.iceberg.Table table, TypeManager typeManager)
     {
         ImmutableList.Builder<IcebergColumnHandle> partitionColumns = ImmutableList.builder();
-        List<IcebergColumnHandle> allColumns = getColumns(table.schema(), typeManager);
+        List<IcebergColumnHandle> allColumns = getColumns(table.schema(), table.spec(), typeManager);
 
         for (int i = 0; i < table.spec().fields().size(); i++) {
             PartitionField field = table.spec().fields().get(i);
@@ -129,10 +132,18 @@ public final class IcebergUtil
         return Optional.ofNullable(table.currentSnapshot()).map(Snapshot::snapshotId);
     }
 
-    public static List<IcebergColumnHandle> getColumns(Schema schema, TypeManager typeManager)
+    public static List<IcebergColumnHandle> getColumns(Schema schema, PartitionSpec partitionSpec, TypeManager typeManager)
     {
+        List<String> partitionFieldNames = new ArrayList<>();
+        for (int i = 0; i < partitionSpec.fields().size(); i++) {
+            PartitionField field = partitionSpec.fields().get(i);
+            if (field.transform().toString().equals("identity")) {
+                partitionFieldNames.add(field.name());
+            }
+        }
+
         return schema.columns().stream()
-                .map(column -> IcebergColumnHandle.create(column, typeManager))
+                .map(column -> partitionFieldNames.contains(column.name()) ? IcebergColumnHandle.create(column, typeManager, PARTITION_KEY) : IcebergColumnHandle.create(column, typeManager, REGULAR))
                 .collect(toImmutableList());
     }
 

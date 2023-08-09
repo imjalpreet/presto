@@ -14,7 +14,6 @@
 package com.facebook.presto.iceberg;
 
 import com.facebook.airlift.json.JsonCodec;
-import com.facebook.presto.common.Subfield;
 import com.facebook.presto.common.predicate.TupleDomain;
 import com.facebook.presto.common.type.Type;
 import com.facebook.presto.common.type.TypeManager;
@@ -39,7 +38,6 @@ import com.facebook.presto.spi.ConnectorTableLayoutHandle;
 import com.facebook.presto.spi.ConnectorTableLayoutResult;
 import com.facebook.presto.spi.ConnectorTableMetadata;
 import com.facebook.presto.spi.Constraint;
-import com.facebook.presto.spi.DiscretePredicates;
 import com.facebook.presto.spi.PrestoException;
 import com.facebook.presto.spi.SchemaNotFoundException;
 import com.facebook.presto.spi.SchemaTableName;
@@ -145,9 +143,6 @@ public class IcebergHiveMetadata
 
         IcebergTableLayoutHandle icebergTableLayoutHandle = (IcebergTableLayoutHandle) handle;
 
-        // TODO: Implement for partitioned tables
-        List<ColumnHandle> partitionColumns = ImmutableList.copyOf(icebergTableLayoutHandle.getPartitionColumns());
-
         IcebergTableHandle tableHandle = icebergTableLayoutHandle.getTable();
         IcebergTableName name = IcebergTableName.from((tableHandle).getTableName());
         MetastoreContext metastoreContext = new MetastoreContext(session.getIdentity(), session.getQueryId(), session.getClientInfo(), session.getSource(), Optional.empty(), false, HiveColumnConverterProvider.DEFAULT_COLUMN_CONVERTER_PROVIDER);
@@ -161,11 +156,6 @@ public class IcebergHiveMetadata
 
         org.apache.iceberg.Table icebergTable = getHiveIcebergTable(metastore, hdfsEnvironment, session, tableHandle.getSchemaTableName());
 
-        Optional<DiscretePredicates> discretePredicates = Optional.empty();
-        if (!partitionColumns.isEmpty()) {
-            // TODO: Implement for partitioned tables
-        }
-
         TupleDomain<ColumnHandle> predicate;
         RowExpression subfieldPredicate;
         if (icebergTableLayoutHandle.isPushdownFilterEnabled()) {
@@ -176,7 +166,7 @@ public class IcebergHiveMetadata
 
             // capture subfields from domainPredicate to add to remainingPredicate
             // so those filters don't get lost
-            Map<String, Type> columnTypes = getColumns(icebergTable.schema(), typeManager).stream()
+            Map<String, Type> columnTypes = getColumns(icebergTable.schema(), icebergTable.spec(), typeManager).stream()
                     .collect(toImmutableMap(IcebergColumnHandle::getName, icebergColumnHandle -> getColumnMetadata(session, tableHandle, icebergColumnHandle).getType()));
             SubfieldExtractor subfieldExtractor = new SubfieldExtractor(functionResolution, rowExpressionService.getExpressionOptimizer(), session);
 
@@ -203,14 +193,9 @@ public class IcebergHiveMetadata
                 predicate,
                 Optional.empty(),
                 Optional.empty(),
-                discretePredicates,
+                Optional.empty(),
                 ImmutableList.of(),
                 Optional.of(combinedRemainingPredicate));
-    }
-
-    private static boolean isEntireColumn(Subfield subfield)
-    {
-        return subfield.getPath().isEmpty();
     }
 
     @Override
@@ -313,7 +298,7 @@ public class IcebergHiveMetadata
     {
         IcebergTableHandle table = (IcebergTableHandle) tableHandle;
         org.apache.iceberg.Table icebergTable = getHiveIcebergTable(metastore, hdfsEnvironment, session, table.getSchemaTableName());
-        return getColumns(icebergTable.schema(), typeManager).stream()
+        return getColumns(icebergTable.schema(), icebergTable.spec(), typeManager).stream()
                 .collect(toImmutableMap(IcebergColumnHandle::getName, identity()));
     }
 
@@ -417,7 +402,7 @@ public class IcebergHiveMetadata
                 tableName,
                 SchemaParser.toJson(metadata.schema()),
                 PartitionSpecParser.toJson(metadata.spec()),
-                getColumns(metadata.schema(), typeManager),
+                getColumns(metadata.schema(), metadata.spec(), typeManager),
                 targetPath,
                 fileFormat,
                 metadata.properties());

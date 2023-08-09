@@ -60,9 +60,9 @@ public class IcebergColumnHandle
         this.requiredSubfields = requireNonNull(requiredSubfields, "requiredSubfields is null");
     }
 
-    public IcebergColumnHandle(ColumnIdentity columnIdentity, Type type, Optional<String> comment)
+    public IcebergColumnHandle(ColumnIdentity columnIdentity, Type type, Optional<String> comment, ColumnType columnType)
     {
-        this(columnIdentity, type, comment, REGULAR, ImmutableList.of());
+        this(columnIdentity, type, comment, columnType, ImmutableList.of());
     }
 
     @JsonProperty
@@ -153,19 +153,21 @@ public class IcebergColumnHandle
 
     public static IcebergColumnHandle primitiveIcebergColumnHandle(int id, String name, Type type, Optional<String> comment)
     {
-        return new IcebergColumnHandle(primitiveColumnIdentity(id, name), type, comment);
+        return new IcebergColumnHandle(primitiveColumnIdentity(id, name), type, comment, REGULAR);
     }
 
-    public static IcebergColumnHandle create(Types.NestedField column, TypeManager typeManager)
+    public static IcebergColumnHandle create(Types.NestedField column, TypeManager typeManager, ColumnType columnType)
     {
         return new IcebergColumnHandle(
                 createColumnIdentity(column),
                 toPrestoType(column.type(), typeManager),
-                Optional.ofNullable(column.doc()));
+                Optional.ofNullable(column.doc()),
+                columnType);
     }
 
     public enum ColumnType
     {
+        PARTITION_KEY,
         REGULAR,
         SYNTHESIZED
     }

@@ -39,7 +39,6 @@ import com.facebook.presto.spi.TableNotFoundException;
 import com.facebook.presto.spi.connector.ConnectorMetadata;
 import com.facebook.presto.spi.connector.ConnectorOutputMetadata;
 import com.facebook.presto.spi.statistics.ComputedStatistics;
-import com.google.common.base.Functions;
 import com.google.common.base.VerifyException;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -78,8 +77,6 @@ import static com.facebook.presto.iceberg.TypeConverter.toPrestoType;
 import static com.facebook.presto.iceberg.WorkerType.NATIVE;
 import static com.facebook.presto.spi.StandardErrorCode.NOT_SUPPORTED;
 import static com.google.common.collect.ImmutableList.toImmutableList;
-import static com.google.common.collect.ImmutableMap.toImmutableMap;
-import static com.google.common.collect.ImmutableSet.toImmutableSet;
 import static java.util.Collections.emptyList;
 import static java.util.Collections.emptyMap;
 import static java.util.Collections.singletonList;
@@ -103,28 +100,31 @@ public abstract class IcebergAbstractMetadata
         this.commitTaskCodec = requireNonNull(commitTaskCodec, "commitTaskCodec is null");
     }
 
+    /**
+     * This class implements the default implementation for getTableLayouts which will be used in the case of a Java Worker
+     *
+     * @param session
+     * @param table
+     * @param constraint
+     * @param desiredColumns
+     * @return List<ConnectorTableLayoutResult>
+     */
     @Override
     public List<ConnectorTableLayoutResult> getTableLayouts(ConnectorSession session, ConnectorTableHandle table, Constraint<ColumnHandle> constraint, Optional<Set<ColumnHandle>> desiredColumns)
     {
         IcebergTableHandle handle = (IcebergTableHandle) table;
-        ConnectorTableLayout layout;
-        if (getWorkerType(session).equals(NATIVE)) {
-            Optional<Set<IcebergColumnHandle>> requestedColumns = desiredColumns.map(columns -> columns.stream().map(column -> (IcebergColumnHandle) column).collect(toImmutableSet()));
-            Map<String, IcebergColumnHandle> predicateColumns = constraint.getSummary().getDomains().get().keySet().stream()
-                    .map(IcebergColumnHandle.class::cast)
-                    .collect(toImmutableMap(IcebergColumnHandle::getName, Functions.identity()));
-            layout = new ConnectorTableLayout(new IcebergTableLayoutHandle(emptyList(), constraint.getSummary().transform(IcebergAbstractMetadata::toSubfield), TRUE_CONSTANT, predicateColumns, TupleDomain.all(), requestedColumns, true, handle, TupleDomain.all()));
-        }
-        else {
-            // In the case of Java Worker, all the new parameters are inconsequential
-            layout = new ConnectorTableLayout(new IcebergTableLayoutHandle(emptyList(), TupleDomain.all(), TRUE_CONSTANT, emptyMap(), TupleDomain.all(), Optional.empty(), true, handle, constraint.getSummary()));
-        }
+        ConnectorTableLayout layout = new ConnectorTableLayout(new IcebergTableLayoutHandle(emptyList(), TupleDomain.all(), TRUE_CONSTANT, emptyMap(), TupleDomain.all(), Optional.empty(), true, handle, constraint.getSummary()));
         return ImmutableList.of(new ConnectorTableLayoutResult(layout, constraint.getSummary()));
     }
 
     public static Subfield toSubfield(ColumnHandle columnHandle)
     {
         return new Subfield(((IcebergColumnHandle) columnHandle).getName(), ImmutableList.of());
+    }
+
+    protected static boolean isEntireColumn(Subfield subfield)
+    {
+        return subfield.getPath().isEmpty();
     }
 
     @Override
@@ -229,7 +229,7 @@ public abstract class IcebergAbstractMetadata
                 table.getTableName(),
                 SchemaParser.toJson(icebergTable.schema()),
                 PartitionSpecParser.toJson(icebergTable.spec()),
-                getColumns(icebergTable.schema(), typeManager),
+                getColumns(icebergTable.schema(), icebergTable.spec(), typeManager),
                 icebergTable.location(),
                 getFileFormat(icebergTable),
                 icebergTable.properties());
