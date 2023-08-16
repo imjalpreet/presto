@@ -279,8 +279,7 @@ public class IcebergFilterPushdown
                                 predicateColumns,
                                 requestedColumns,
                                 true,
-                                (IcebergTableHandle) tableHandle,
-                                TupleDomain.all())),
+                                (IcebergTableHandle) tableHandle)),
                 dynamicFilterExpression);
     }
 

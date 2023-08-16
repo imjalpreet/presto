@@ -14,7 +14,6 @@
 package com.facebook.presto.iceberg;
 
 import com.facebook.airlift.json.JsonCodec;
-import com.facebook.presto.common.Subfield;
 import com.facebook.presto.common.predicate.TupleDomain;
 import com.facebook.presto.common.type.Type;
 import com.facebook.presto.common.type.TypeManager;
@@ -201,11 +200,6 @@ public class IcebergHiveMetadata
                 Optional.of(combinedRemainingPredicate));
     }
 
-    private static boolean isEntireColumn(Subfield subfield)
-    {
-        return subfield.getPath().isEmpty();
-    }
-
     @Override
     public IcebergTableHandle getTableHandle(ConnectorSession session, SchemaTableName tableName)
     {
@@ -260,7 +254,7 @@ public class IcebergHiveMetadata
                 .collect(toImmutableMap(IcebergColumnHandle::getName, Functions.identity()));
 
         Optional<Set<IcebergColumnHandle>> requestedColumns = desiredColumns.map(columns -> columns.stream().map(column -> (IcebergColumnHandle) column).collect(toImmutableSet()));
-        ConnectorTableLayout layout = getTableLayout(session, new IcebergTableLayoutHandle(constraint.getSummary().transform(IcebergAbstractMetadata::toSubfield), TRUE_CONSTANT, predicateColumns, requestedColumns, true, handle, TupleDomain.all()));
+        ConnectorTableLayout layout = getTableLayout(session, new IcebergTableLayoutHandle(constraint.getSummary().transform(IcebergAbstractMetadata::toSubfield), TRUE_CONSTANT, predicateColumns, requestedColumns, true, handle));
         return ImmutableList.of(new ConnectorTableLayoutResult(layout, constraint.getSummary()));
     }
 
