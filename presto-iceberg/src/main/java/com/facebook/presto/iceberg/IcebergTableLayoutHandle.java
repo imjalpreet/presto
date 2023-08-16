@@ -15,7 +15,6 @@ package com.facebook.presto.iceberg;
 
 import com.facebook.presto.common.Subfield;
 import com.facebook.presto.common.predicate.TupleDomain;
-import com.facebook.presto.spi.ColumnHandle;
 import com.facebook.presto.spi.ConnectorTableLayoutHandle;
 import com.facebook.presto.spi.relation.RowExpression;
 import com.fasterxml.jackson.annotation.JsonCreator;
@@ -37,7 +36,6 @@ public class IcebergTableLayoutHandle
     private final Map<String, IcebergColumnHandle> predicateColumns;
     private final Optional<Set<IcebergColumnHandle>> requestedColumns;
     private final IcebergTableHandle table;
-    private final TupleDomain<ColumnHandle> tupleDomain;
 
     @JsonCreator
     public IcebergTableLayoutHandle(
@@ -46,8 +44,7 @@ public class IcebergTableLayoutHandle
             @JsonProperty("predicateColumns") Map<String, IcebergColumnHandle> predicateColumns,
             @JsonProperty("requestedColumns") Optional<Set<IcebergColumnHandle>> requestedColumns,
             @JsonProperty("pushdownFilterEnabled") boolean pushdownFilterEnabled,
-            @JsonProperty("table") IcebergTableHandle table,
-            @JsonProperty("tupleDomain") TupleDomain<ColumnHandle> domain)
+            @JsonProperty("table") IcebergTableHandle table)
     {
         this.domainPredicate = requireNonNull(domainPredicate, "domainPredicate is null");
         this.remainingPredicate = requireNonNull(remainingPredicate, "remainingPredicate is null");
@@ -55,7 +52,6 @@ public class IcebergTableLayoutHandle
         this.requestedColumns = requireNonNull(requestedColumns, "requestedColumns is null");
         this.pushdownFilterEnabled = pushdownFilterEnabled;
         this.table = requireNonNull(table, "table is null");
-        this.tupleDomain = requireNonNull(domain, "tupleDomain is null");
     }
 
     @JsonProperty
@@ -94,12 +90,6 @@ public class IcebergTableLayoutHandle
         return table;
     }
 
-    @JsonProperty
-    public TupleDomain<ColumnHandle> getTupleDomain()
-    {
-        return tupleDomain;
-    }
-
     @Override
     public boolean equals(Object o)
     {
@@ -115,14 +105,13 @@ public class IcebergTableLayoutHandle
                 Objects.equals(predicateColumns, that.predicateColumns) &&
                 Objects.equals(requestedColumns, that.requestedColumns) &&
                 Objects.equals(pushdownFilterEnabled, that.pushdownFilterEnabled) &&
-                Objects.equals(table, that.table) &&
-                Objects.equals(tupleDomain, that.tupleDomain);
+                Objects.equals(table, that.table);
     }
 
     @Override
     public int hashCode()
     {
-        return Objects.hash(domainPredicate, remainingPredicate, predicateColumns, requestedColumns, pushdownFilterEnabled, table, tupleDomain);
+        return Objects.hash(domainPredicate, remainingPredicate, predicateColumns, requestedColumns, pushdownFilterEnabled, table);
     }
 
     @Override

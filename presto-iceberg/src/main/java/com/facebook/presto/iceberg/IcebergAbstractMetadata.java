@@ -16,7 +16,6 @@ package com.facebook.presto.iceberg;
 import com.facebook.airlift.json.JsonCodec;
 import com.facebook.airlift.log.Logger;
 import com.facebook.presto.common.Subfield;
-import com.facebook.presto.common.predicate.TupleDomain;
 import com.facebook.presto.common.type.TypeManager;
 import com.facebook.presto.hive.HiveWrittenPartitions;
 import com.facebook.presto.spi.ColumnHandle;
@@ -82,8 +81,6 @@ import static com.facebook.presto.iceberg.WorkerType.NATIVE;
 import static com.facebook.presto.spi.StandardErrorCode.NOT_SUPPORTED;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.common.collect.ImmutableMap.toImmutableMap;
-import static com.google.common.collect.ImmutableSet.toImmutableSet;
-import static java.util.Collections.emptyMap;
 import static java.util.Collections.singletonList;
 import static java.util.Objects.requireNonNull;
 
@@ -105,28 +102,36 @@ public abstract class IcebergAbstractMetadata
         this.commitTaskCodec = requireNonNull(commitTaskCodec, "commitTaskCodec is null");
     }
 
+    /**
+     * This class implements the default implementation for getTableLayouts which will be used in the case of a Java Worker
+     *
+     * @param session
+     * @param table
+     * @param constraint
+     * @param desiredColumns
+     * @return List<ConnectorTableLayoutResult>
+     */
     @Override
     public List<ConnectorTableLayoutResult> getTableLayouts(ConnectorSession session, ConnectorTableHandle table, Constraint<ColumnHandle> constraint, Optional<Set<ColumnHandle>> desiredColumns)
     {
         IcebergTableHandle handle = (IcebergTableHandle) table;
-        ConnectorTableLayout layout;
-        if (getWorkerType(session).equals(NATIVE)) {
-            Optional<Set<IcebergColumnHandle>> requestedColumns = desiredColumns.map(columns -> columns.stream().map(column -> (IcebergColumnHandle) column).collect(toImmutableSet()));
-            Map<String, IcebergColumnHandle> predicateColumns = constraint.getSummary().getDomains().get().keySet().stream()
-                    .map(IcebergColumnHandle.class::cast)
-                    .collect(toImmutableMap(IcebergColumnHandle::getName, Functions.identity()));
-            layout = new ConnectorTableLayout(new IcebergTableLayoutHandle(constraint.getSummary().transform(IcebergAbstractMetadata::toSubfield), TRUE_CONSTANT, predicateColumns, requestedColumns, true, handle, TupleDomain.all()));
-        }
-        else {
-            // In the case of Java Worker, all the new parameters are inconsequential
-            layout = new ConnectorTableLayout(new IcebergTableLayoutHandle(TupleDomain.all(), TRUE_CONSTANT, emptyMap(), Optional.empty(), true, handle, constraint.getSummary()));
-        }
+
+        Map<String, IcebergColumnHandle> predicateColumns = constraint.getSummary().getDomains().get().keySet().stream()
+                .map(IcebergColumnHandle.class::cast)
+                .collect(toImmutableMap(IcebergColumnHandle::getName, Functions.identity()));
+
+        ConnectorTableLayout layout = new ConnectorTableLayout(new IcebergTableLayoutHandle(constraint.getSummary().transform(IcebergAbstractMetadata::toSubfield), TRUE_CONSTANT, predicateColumns, Optional.empty(), true, handle));
         return ImmutableList.of(new ConnectorTableLayoutResult(layout, constraint.getSummary()));
     }
 
     public static Subfield toSubfield(ColumnHandle columnHandle)
     {
         return new Subfield(((IcebergColumnHandle) columnHandle).getName(), ImmutableList.of());
+    }
+
+    protected static boolean isEntireColumn(Subfield subfield)
+    {
+        return subfield.getPath().isEmpty();
     }
 
     @Override
