@@ -78,6 +78,7 @@ public final class IcebergSessionProperties
     private static final String NESSIE_REFERENCE_HASH = "nessie_reference_hash";
     public static final String READ_MASKED_VALUE_ENABLED = "read_null_masked_parquet_encrypted_value_enabled";
     public static final String PARQUET_DEREFERENCE_PUSHDOWN_ENABLED = "parquet_dereference_pushdown_enabled";
+    public static final String PUSHDOWN_FILTER_ENABLED = "pushdown_filter_enabled";
     private final List<PropertyMetadata<?>> sessionProperties;
 
     @Inject
@@ -273,6 +274,11 @@ public final class IcebergSessionProperties
                         PARQUET_DEREFERENCE_PUSHDOWN_ENABLED,
                         "Is dereference pushdown expression pushdown into Parquet reader enabled?",
                         icebergConfig.isParquetDereferencePushdownEnabled(),
+                        false),
+                booleanProperty(
+                        PUSHDOWN_FILTER_ENABLED,
+                        "Experimental: enable complex filter pushdown. This is only supported with Native Worker.",
+                        icebergConfig.isPushdownFilterEnabled(),
                         false));
     }
 
@@ -444,5 +450,10 @@ public final class IcebergSessionProperties
     public static boolean isParquetDereferencePushdownEnabled(ConnectorSession session)
     {
         return session.getProperty(PARQUET_DEREFERENCE_PUSHDOWN_ENABLED, Boolean.class);
+    }
+
+    public static boolean isPushdownFilterEnabled(ConnectorSession session)
+    {
+        return session.getProperty(PUSHDOWN_FILTER_ENABLED, Boolean.class);
     }
 }
