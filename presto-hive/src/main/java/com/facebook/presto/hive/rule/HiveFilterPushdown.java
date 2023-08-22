@@ -186,6 +186,35 @@ public class HiveFilterPushdown
                 currentLayoutHandle);
     }
 
+    public Result checkConstantBooleanExpression(RowExpression filter, Optional<ConnectorTableLayoutHandle> currentLayoutHandle, ConnectorMetadata metadata, ConnectorSession session)
+    {
+        checkArgument(!FALSE_CONSTANT.equals(filter), "Cannot pushdown filter that is always false");
+
+        ConnectorPushdownFilterResult connectorPushdownFilterResult;
+        if (TRUE_CONSTANT.equals(filter) && currentLayoutHandle.isPresent()) {
+            connectorPushdownFilterResult = new ConnectorPushdownFilterResult(metadata.getTableLayout(session, currentLayoutHandle.get()), TRUE_CONSTANT);
+            return new Result(connectorPushdownFilterResult);
+        }
+
+        DomainTranslator.ExtractionResult<Subfield> decomposedFilter = getDecomposedFilter(session, filter, currentLayoutHandle);
+
+        if (decomposedFilter.getTupleDomain().isNone()) {
+            connectorPushdownFilterResult = new ConnectorPushdownFilterResult(EMPTY_TABLE_LAYOUT, FALSE_CONSTANT);
+            return new Result(connectorPushdownFilterResult);
+        }
+
+        RowExpression optimizedRemainingExpression = rowExpressionService.getExpressionOptimizer().optimize(decomposedFilter.getRemainingExpression(), OPTIMIZED, session);
+        if (optimizedRemainingExpression instanceof ConstantExpression) {
+            ConstantExpression constantExpression = (ConstantExpression) optimizedRemainingExpression;
+            if (FALSE_CONSTANT.equals(constantExpression) || constantExpression.getValue() == null) {
+                connectorPushdownFilterResult = new ConnectorPushdownFilterResult(EMPTY_TABLE_LAYOUT, FALSE_CONSTANT);
+                return new Result(connectorPushdownFilterResult);
+            }
+        }
+
+        return new Result(decomposedFilter, optimizedRemainingExpression);
+    }
+
     public ConnectorPushdownFilterResult pushdownFilter(
             ConnectorSession session,
             ConnectorMetadata metadata,
@@ -194,99 +223,29 @@ public class HiveFilterPushdown
             RowExpression filter,
             Optional<ConnectorTableLayoutHandle> currentLayoutHandle)
     {
-        checkArgument(!FALSE_CONSTANT.equals(filter), "Cannot pushdown filter that is always false");
-        if (TRUE_CONSTANT.equals(filter) && currentLayoutHandle.isPresent()) {
-            return new ConnectorPushdownFilterResult(metadata.getTableLayout(session, currentLayoutHandle.get()), TRUE_CONSTANT);
+        Result result = checkConstantBooleanExpression(filter, currentLayoutHandle, metadata, session);
+        if (result.getConnectorPushdownFilterResult() != null) {
+            return result.getConnectorPushdownFilterResult();
         }
 
-        // Split the filter into 3 groups of conjuncts:
-        //  - range filters that apply to entire columns,
-        //  - range filters that apply to subfields,
-        //  - the rest. Intersect these with possibly pre-existing filters.
-        DomainTranslator.ExtractionResult<Subfield> decomposedFilter = rowExpressionService.getDomainTranslator()
-                .fromPredicate(session, filter, new SubfieldExtractor(functionResolution, rowExpressionService.getExpressionOptimizer(), session).toColumnExtractor());
-        if (currentLayoutHandle.isPresent()) {
-            HiveTableLayoutHandle currentHiveLayout = (HiveTableLayoutHandle) currentLayoutHandle.get();
-            decomposedFilter = intersectExtractionResult(new DomainTranslator.ExtractionResult(currentHiveLayout.getDomainPredicate(), currentHiveLayout.getRemainingPredicate()), decomposedFilter);
-        }
-
-        if (decomposedFilter.getTupleDomain().isNone()) {
-            return new ConnectorPushdownFilterResult(EMPTY_TABLE_LAYOUT, FALSE_CONSTANT);
-        }
-
-        RowExpression optimizedRemainingExpression = rowExpressionService.getExpressionOptimizer().optimize(decomposedFilter.getRemainingExpression(), OPTIMIZED, session);
-        if (optimizedRemainingExpression instanceof ConstantExpression) {
-            ConstantExpression constantExpression = (ConstantExpression) optimizedRemainingExpression;
-            if (FALSE_CONSTANT.equals(constantExpression) || constantExpression.getValue() == null) {
-                return new ConnectorPushdownFilterResult(EMPTY_TABLE_LAYOUT, FALSE_CONSTANT);
-            }
-        }
         Map<String, ColumnHandle> columnHandles = metadata.getColumnHandles(session, tableHandle);
-        TupleDomain<ColumnHandle> entireColumnDomain = decomposedFilter.getTupleDomain()
-                .transform(subfield -> isEntireColumn(subfield) ? subfield.getRootName() : null)
-                .transform(columnHandles::get);
-        if (currentLayoutHandle.isPresent()) {
-            entireColumnDomain = entireColumnDomain.intersect(((HiveTableLayoutHandle) (currentLayoutHandle.get())).getPartitionColumnPredicate());
-        }
+        TupleDomain<ColumnHandle> entireColumnDomain = getEntireColumnDomain(currentLayoutHandle, result, columnHandles);
 
         Constraint<ColumnHandle> constraint = new Constraint<>(entireColumnDomain);
 
         // Extract deterministic conjuncts that apply to partition columns and specify these as Constraint#predicate
-        if (!TRUE_CONSTANT.equals(decomposedFilter.getRemainingExpression())) {
-            LogicalRowExpressions logicalRowExpressions = new LogicalRowExpressions(rowExpressionService.getDeterminismEvaluator(), functionResolution, functionMetadataManager);
-            RowExpression deterministicPredicate = logicalRowExpressions.filterDeterministicConjuncts(decomposedFilter.getRemainingExpression());
-            if (!TRUE_CONSTANT.equals(deterministicPredicate)) {
-                ConstraintEvaluator evaluator = new ConstraintEvaluator(rowExpressionService, session, columnHandles, deterministicPredicate);
-                constraint = new Constraint<>(entireColumnDomain, evaluator::isCandidate);
-            }
-        }
+        constraint = extractDeterministicConjuncts(session, result, columnHandles, entireColumnDomain, constraint);
 
         HivePartitionResult hivePartitionResult = partitionManager.getPartitions(metastore, tableHandle, constraint, session);
 
-        TupleDomain<Subfield> domainPredicate = withColumnDomains(ImmutableMap.<Subfield, Domain>builder()
-                .putAll(hivePartitionResult.getUnenforcedConstraint()
-                        .transform(HiveFilterPushdown::toSubfield)
-                        .getDomains()
-                        .orElse(ImmutableMap.of()))
-                .putAll(decomposedFilter.getTupleDomain()
-                        .transform(subfield -> !isEntireColumn(subfield) ? subfield : null)
-                        .getDomains()
-                        .orElse(ImmutableMap.of()))
-                .build());
+        TupleDomain<Subfield> domainPredicate = getDomainPredicate(result, hivePartitionResult);
 
-        Set<String> predicateColumnNames = new HashSet<>();
-        domainPredicate.getDomains().get().keySet().stream()
-                .map(Subfield::getRootName)
-                .forEach(predicateColumnNames::add);
-        // Include only columns referenced in the optimized expression. Although the expression is sent to the worker node
-        // unoptimized, the worker is expected to optimize the expression before executing.
-        extractVariableExpressions(optimizedRemainingExpression).stream()
-                .map(VariableReferenceExpression::getName)
-                .forEach(predicateColumnNames::add);
-
-        Map<String, HiveColumnHandle> predicateColumns = predicateColumnNames.stream()
-                .map(columnHandles::get)
-                .map(HiveColumnHandle.class::cast)
-                .collect(toImmutableMap(HiveColumnHandle::getName, Functions.identity()));
+        Map<String, HiveColumnHandle> predicateColumns = getPredicateColumns(result, columnHandles, domainPredicate);
 
         HiveTableHandle hiveTableHandle = (HiveTableHandle) tableHandle;
         SchemaTableName tableName = hiveTableHandle.getSchemaTableName();
 
-        LogicalRowExpressions logicalRowExpressions = new LogicalRowExpressions(rowExpressionService.getDeterminismEvaluator(), functionResolution, functionMetadataManager);
-        List<RowExpression> conjuncts = extractConjuncts(decomposedFilter.getRemainingExpression());
-        ImmutableList.Builder<RowExpression> dynamicConjuncts = ImmutableList.builder();
-        ImmutableList.Builder<RowExpression> staticConjuncts = ImmutableList.builder();
-        for (RowExpression conjunct : conjuncts) {
-            if (isDynamicFilter(conjunct) || useDynamicFilter(conjunct, tableHandle, columnHandles)) {
-                dynamicConjuncts.add(conjunct);
-            }
-            else {
-                staticConjuncts.add(conjunct);
-            }
-        }
-        RowExpression dynamicFilterExpression = logicalRowExpressions.combineConjuncts(dynamicConjuncts.build());
-        RowExpression remainingExpression = logicalRowExpressions.combineConjuncts(staticConjuncts.build());
-        remainingExpression = removeNestedDynamicFilters(remainingExpression);
+        RowExpressionResult rowExpressionResult = getRowExpressionResult(tableHandle, result, columnHandles);
 
         MetastoreContext context = new MetastoreContext(session.getIdentity(), session.getQueryId(), session.getClientInfo(), session.getSource(), getMetastoreHeaders(session), isUserDefinedTypeEncodingEnabled(session), metastore.getColumnConverterProvider());
         Table table = metastore.getTable(context, hiveTableHandle)
@@ -297,7 +256,7 @@ public class HiveFilterPushdown
                 tableName,
                 hivePartitionResult.getBucketHandle(),
                 hivePartitionResult.getBucketFilter(),
-                remainingExpression,
+                rowExpressionResult.getRemainingExpression(),
                 domainPredicate);
 
         Optional<Set<HiveColumnHandle>> requestedColumns = currentLayoutHandle.map(layout -> ((HiveTableLayoutHandle) layout).getRequestedColumns()).orElse(Optional.empty());
@@ -313,7 +272,7 @@ public class HiveFilterPushdown
                                 .setDataColumns(pruneColumnComments(hivePartitionResult.getDataColumns()))
                                 .setTableParameters(hivePartitionResult.getTableParameters())
                                 .setDomainPredicate(domainPredicate)
-                                .setRemainingPredicate(remainingExpression)
+                                .setRemainingPredicate(rowExpressionResult.getRemainingExpression())
                                 .setPredicateColumns(predicateColumns)
                                 .setPartitionColumnPredicate(hivePartitionResult.getEnforcedConstraint())
                                 .setPartitions(hivePartitionResult.getPartitions())
@@ -326,7 +285,162 @@ public class HiveFilterPushdown
                                 .setAppendRowNumberEnabled(appendRowNumbereEnabled)
                                 .setHiveTableHandle(hiveTableHandle)
                                 .build()),
-                dynamicFilterExpression);
+                rowExpressionResult.getDynamicFilterExpression());
+    }
+
+    private RowExpressionResult getRowExpressionResult(ConnectorTableHandle tableHandle, Result result, Map<String, ColumnHandle> columnHandles)
+    {
+        LogicalRowExpressions logicalRowExpressions = new LogicalRowExpressions(rowExpressionService.getDeterminismEvaluator(), functionResolution, functionMetadataManager);
+        List<RowExpression> conjuncts = extractConjuncts(result.getDecomposedFilter().getRemainingExpression());
+        ImmutableList.Builder<RowExpression> dynamicConjuncts = ImmutableList.builder();
+        ImmutableList.Builder<RowExpression> staticConjuncts = ImmutableList.builder();
+        for (RowExpression conjunct : conjuncts) {
+            if (isDynamicFilter(conjunct) || useDynamicFilter(conjunct, tableHandle, columnHandles)) {
+                dynamicConjuncts.add(conjunct);
+            }
+            else {
+                staticConjuncts.add(conjunct);
+            }
+        }
+        RowExpression dynamicFilterExpression = logicalRowExpressions.combineConjuncts(dynamicConjuncts.build());
+        RowExpression remainingExpression = logicalRowExpressions.combineConjuncts(staticConjuncts.build());
+        remainingExpression = removeNestedDynamicFilters(remainingExpression);
+        return new RowExpressionResult(dynamicFilterExpression, remainingExpression);
+    }
+
+    private static class RowExpressionResult
+    {
+        public final RowExpression dynamicFilterExpression;
+        public final RowExpression remainingExpression;
+
+        public RowExpressionResult(RowExpression dynamicFilterExpression, RowExpression remainingExpression)
+        {
+            this.dynamicFilterExpression = dynamicFilterExpression;
+            this.remainingExpression = remainingExpression;
+        }
+
+        public RowExpression getDynamicFilterExpression()
+        {
+            return dynamicFilterExpression;
+        }
+
+        public RowExpression getRemainingExpression()
+        {
+            return remainingExpression;
+        }
+    }
+
+    private static Map<String, HiveColumnHandle> getPredicateColumns(Result result, Map<String, ColumnHandle> columnHandles, TupleDomain<Subfield> domainPredicate)
+    {
+        Set<String> predicateColumnNames = new HashSet<>();
+        domainPredicate.getDomains().get().keySet().stream()
+                .map(Subfield::getRootName)
+                .forEach(predicateColumnNames::add);
+        // Include only columns referenced in the optimized expression. Although the expression is sent to the worker node
+        // unoptimized, the worker is expected to optimize the expression before executing.
+        extractVariableExpressions(result.getOptimizedRemainingExpression()).stream()
+                .map(VariableReferenceExpression::getName)
+                .forEach(predicateColumnNames::add);
+
+        return predicateColumnNames.stream()
+                .map(columnHandles::get)
+                .map(HiveColumnHandle.class::cast)
+                .collect(toImmutableMap(HiveColumnHandle::getName, Functions.identity()));
+    }
+
+    private static TupleDomain<Subfield> getDomainPredicate(Result result, HivePartitionResult hivePartitionResult)
+    {
+        return withColumnDomains(ImmutableMap.<Subfield, Domain>builder()
+                .putAll(hivePartitionResult.getUnenforcedConstraint()
+                        .transform(HiveFilterPushdown::toSubfield)
+                        .getDomains()
+                        .orElse(ImmutableMap.of()))
+                .putAll(result.getDecomposedFilter().getTupleDomain()
+                        .transform(subfield -> !isEntireColumn(subfield) ? subfield : null)
+                        .getDomains()
+                        .orElse(ImmutableMap.of()))
+                .build());
+    }
+
+    private Constraint<ColumnHandle> extractDeterministicConjuncts(ConnectorSession session, Result result, Map<String, ColumnHandle> columnHandles, TupleDomain<ColumnHandle> entireColumnDomain, Constraint<ColumnHandle> constraint)
+    {
+        if (!TRUE_CONSTANT.equals(result.getDecomposedFilter().getRemainingExpression())) {
+            LogicalRowExpressions logicalRowExpressions = new LogicalRowExpressions(rowExpressionService.getDeterminismEvaluator(), functionResolution, functionMetadataManager);
+            RowExpression deterministicPredicate = logicalRowExpressions.filterDeterministicConjuncts(result.getDecomposedFilter().getRemainingExpression());
+            if (!TRUE_CONSTANT.equals(deterministicPredicate)) {
+                ConstraintEvaluator evaluator = new ConstraintEvaluator(rowExpressionService, session, columnHandles, deterministicPredicate);
+                constraint = new Constraint<>(entireColumnDomain, evaluator::isCandidate);
+            }
+        }
+        return constraint;
+    }
+
+    private static TupleDomain<ColumnHandle> getEntireColumnDomain(Optional<ConnectorTableLayoutHandle> currentLayoutHandle, Result result, Map<String, ColumnHandle> columnHandles)
+    {
+        TupleDomain<ColumnHandle> entireColumnDomain = result.getDecomposedFilter().getTupleDomain()
+                .transform(subfield -> isEntireColumn(subfield) ? subfield.getRootName() : null)
+                .transform(columnHandles::get);
+        if (currentLayoutHandle.isPresent()) {
+            entireColumnDomain = entireColumnDomain.intersect(((HiveTableLayoutHandle) (currentLayoutHandle.get())).getPartitionColumnPredicate());
+        }
+        return entireColumnDomain;
+    }
+
+    private static class Result
+    {
+        public final DomainTranslator.ExtractionResult<Subfield> decomposedFilter;
+        public final RowExpression optimizedRemainingExpression;
+        public final ConnectorPushdownFilterResult connectorPushdownFilterResult;
+
+        public Result(ConnectorPushdownFilterResult connectorPushdownFilterResult)
+        {
+            this(null, null, connectorPushdownFilterResult);
+        }
+
+        public Result(DomainTranslator.ExtractionResult<Subfield> decomposedFilter, RowExpression optimizedRemainingExpression)
+        {
+            this(decomposedFilter, optimizedRemainingExpression, null);
+        }
+
+        public Result(
+                DomainTranslator.ExtractionResult<Subfield> decomposedFilter,
+                RowExpression optimizedRemainingExpression,
+                ConnectorPushdownFilterResult connectorPushdownFilterResult)
+        {
+            this.decomposedFilter = decomposedFilter;
+            this.optimizedRemainingExpression = optimizedRemainingExpression;
+            this.connectorPushdownFilterResult = connectorPushdownFilterResult;
+        }
+
+        public DomainTranslator.ExtractionResult<Subfield> getDecomposedFilter()
+        {
+            return decomposedFilter;
+        }
+
+        public RowExpression getOptimizedRemainingExpression()
+        {
+            return optimizedRemainingExpression;
+        }
+
+        public ConnectorPushdownFilterResult getConnectorPushdownFilterResult()
+        {
+            return connectorPushdownFilterResult;
+        }
+    }
+
+    public DomainTranslator.ExtractionResult<Subfield> getDecomposedFilter(ConnectorSession session, RowExpression filter, Optional<ConnectorTableLayoutHandle> currentLayoutHandle)
+    {
+        // Split the filter into 3 groups of conjuncts:
+        //  - range filters that apply to entire columns,
+        //  - range filters that apply to subfields,
+        //  - the rest. Intersect these with possibly pre-existing filters.
+        DomainTranslator.ExtractionResult<Subfield> decomposedFilter = rowExpressionService.getDomainTranslator()
+                .fromPredicate(session, filter, new SubfieldExtractor(functionResolution, rowExpressionService.getExpressionOptimizer(), session).toColumnExtractor());
+        if (currentLayoutHandle.isPresent()) {
+            HiveTableLayoutHandle currentHiveLayout = (HiveTableLayoutHandle) currentLayoutHandle.get();
+            decomposedFilter = intersectExtractionResult(new DomainTranslator.ExtractionResult(currentHiveLayout.getDomainPredicate(), currentHiveLayout.getRemainingPredicate()), decomposedFilter);
+        }
+        return decomposedFilter;
     }
 
     public static class ConnectorPushdownFilterResult
@@ -379,10 +493,7 @@ public class HiveFilterPushdown
             TableHandle handle = tableScan.getTable();
             HiveMetadata hiveMetadata = getMetadata(handle);
 
-            BiMap<VariableReferenceExpression, VariableReferenceExpression> symbolToColumnMapping = tableScan.getAssignments().entrySet().stream()
-                    .collect(toImmutableBiMap(
-                            Map.Entry::getKey,
-                            entry -> new VariableReferenceExpression(Optional.empty(), getColumnName(session, hiveMetadata, handle.getConnectorHandle(), entry.getValue()), entry.getKey().getType())));
+            BiMap<VariableReferenceExpression, VariableReferenceExpression> symbolToColumnMapping = getSymbolToColumnMapping(tableScan, handle, hiveMetadata);
 
             RowExpression replacedExpression = replaceExpression(expression, symbolToColumnMapping);
             // replaceExpression() may further optimize the expression; if the resulting expression is always false, then return empty Values node
@@ -421,6 +532,15 @@ public class HiveFilterPushdown
             return node;
         }
 
+        private BiMap<VariableReferenceExpression, VariableReferenceExpression> getSymbolToColumnMapping(TableScanNode tableScan, TableHandle handle, HiveMetadata hiveMetadata)
+        {
+            BiMap<VariableReferenceExpression, VariableReferenceExpression> symbolToColumnMapping = tableScan.getAssignments().entrySet().stream()
+                    .collect(toImmutableBiMap(
+                            Map.Entry::getKey,
+                            entry -> new VariableReferenceExpression(Optional.empty(), getColumnName(session, hiveMetadata, handle.getConnectorHandle(), entry.getValue()), entry.getKey().getType())));
+            return symbolToColumnMapping;
+        }
+
         @Override
         public PlanNode visitTableScan(TableScanNode tableScan, RewriteContext<Void> context)
         {
@@ -440,6 +560,11 @@ public class HiveFilterPushdown
                 return new ValuesNode(tableScan.getSourceLocation(), idAllocator.getNextId(), tableScan.getOutputVariables(), ImmutableList.of(), Optional.of(tableScan.getTable().getConnectorHandle().toString()));
             }
 
+            return getTableScanNode(tableScan, handle, pushdownFilterResult);
+        }
+
+        private TableScanNode getTableScanNode(TableScanNode tableScan, TableHandle handle, ConnectorPushdownFilterResult pushdownFilterResult)
+        {
             TableScanNode node = new TableScanNode(
                     tableScan.getSourceLocation(),
                     tableScan.getId(),
