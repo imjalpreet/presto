@@ -78,7 +78,7 @@ public final class IcebergSessionProperties
     private static final String NESSIE_REFERENCE_HASH = "nessie_reference_hash";
     public static final String READ_MASKED_VALUE_ENABLED = "read_null_masked_parquet_encrypted_value_enabled";
     public static final String PARQUET_DEREFERENCE_PUSHDOWN_ENABLED = "parquet_dereference_pushdown_enabled";
-    public static final String WORKER_TYPE = "worker_type";
+    public static final String PUSHDOWN_FILTER_ENABLED = "pushdown_filter_enabled";
     private final List<PropertyMetadata<?>> sessionProperties;
 
     @Inject
@@ -275,15 +275,11 @@ public final class IcebergSessionProperties
                         "Is dereference pushdown expression pushdown into Parquet reader enabled?",
                         icebergConfig.isParquetDereferencePushdownEnabled(),
                         false),
-                new PropertyMetadata<>(
-                        WORKER_TYPE,
-                        "Type of worker used for execution",
-                        VARCHAR,
-                        WorkerType.class,
-                        icebergConfig.getWorkerType(),
-                        false,
-                        value -> WorkerType.valueOf((String) value),
-                        WorkerType::toString));
+                booleanProperty(
+                        PUSHDOWN_FILTER_ENABLED,
+                        "Experimental: enable complex filter pushdown. This is only supported with Native Worker.",
+                        icebergConfig.isPushdownFilterEnabled(),
+                        false));
     }
 
     public List<PropertyMetadata<?>> getSessionProperties()
@@ -456,8 +452,8 @@ public final class IcebergSessionProperties
         return session.getProperty(PARQUET_DEREFERENCE_PUSHDOWN_ENABLED, Boolean.class);
     }
 
-    public static WorkerType getWorkerType(ConnectorSession session)
+    public static boolean isPushdownFilterEnabled(ConnectorSession session)
     {
-        return session.getProperty(WORKER_TYPE, WorkerType.class);
+        return session.getProperty(PUSHDOWN_FILTER_ENABLED, Boolean.class);
     }
 }

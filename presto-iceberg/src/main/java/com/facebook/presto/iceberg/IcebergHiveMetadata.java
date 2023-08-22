@@ -72,7 +72,7 @@ import static com.facebook.presto.expressions.LogicalRowExpressions.TRUE_CONSTAN
 import static com.facebook.presto.expressions.LogicalRowExpressions.binaryExpression;
 import static com.facebook.presto.hive.HiveMetadata.TABLE_COMMENT;
 import static com.facebook.presto.iceberg.IcebergSchemaProperties.getSchemaLocation;
-import static com.facebook.presto.iceberg.IcebergSessionProperties.getWorkerType;
+import static com.facebook.presto.iceberg.IcebergSessionProperties.isPushdownFilterEnabled;
 import static com.facebook.presto.iceberg.IcebergTableProperties.getFileFormat;
 import static com.facebook.presto.iceberg.IcebergTableProperties.getFormatVersion;
 import static com.facebook.presto.iceberg.IcebergTableProperties.getPartitioning;
@@ -84,7 +84,6 @@ import static com.facebook.presto.iceberg.IcebergUtil.isIcebergTable;
 import static com.facebook.presto.iceberg.PartitionFields.parsePartitionFields;
 import static com.facebook.presto.iceberg.TableType.DATA;
 import static com.facebook.presto.iceberg.TypeConverter.toIcebergType;
-import static com.facebook.presto.iceberg.WorkerType.JAVA;
 import static com.facebook.presto.spi.StandardErrorCode.INVALID_SCHEMA_PROPERTY;
 import static com.facebook.presto.spi.StandardErrorCode.NOT_SUPPORTED;
 import static com.facebook.presto.spi.StandardErrorCode.SCHEMA_NOT_EMPTY;
@@ -136,7 +135,7 @@ public class IcebergHiveMetadata
     @Override
     public ConnectorTableLayout getTableLayout(ConnectorSession session, ConnectorTableLayoutHandle handle)
     {
-        if (getWorkerType(session).equals(JAVA)) {
+        if (!isPushdownFilterEnabled(session)) {
             return super.getTableLayout(session, handle);
         }
 
@@ -228,7 +227,7 @@ public class IcebergHiveMetadata
     @Override
     public List<ConnectorTableLayoutResult> getTableLayouts(ConnectorSession session, ConnectorTableHandle table, Constraint<ColumnHandle> constraint, Optional<Set<ColumnHandle>> desiredColumns)
     {
-        if (getWorkerType(session).equals(JAVA)) {
+        if (!isPushdownFilterEnabled(session)) {
             return super.getTableLayouts(session, table, constraint, desiredColumns);
         }
 
@@ -253,7 +252,7 @@ public class IcebergHiveMetadata
                 .collect(toImmutableMap(IcebergColumnHandle::getName, Functions.identity()));
 
         Optional<Set<IcebergColumnHandle>> requestedColumns = desiredColumns.map(columns -> columns.stream().map(column -> (IcebergColumnHandle) column).collect(toImmutableSet()));
-        ConnectorTableLayout layout = getTableLayout(session, new IcebergTableLayoutHandle(constraint.getSummary().transform(IcebergAbstractMetadata::toSubfield), TRUE_CONSTANT, predicateColumns, requestedColumns, true, handle));
+        ConnectorTableLayout layout = getTableLayout(session, new IcebergTableLayoutHandle(constraint.getSummary().transform(IcebergAbstractMetadata::toSubfield), TRUE_CONSTANT, predicateColumns, requestedColumns, isPushdownFilterEnabled(session), handle));
         return ImmutableList.of(new ConnectorTableLayoutResult(layout, constraint.getSummary()));
     }
 
