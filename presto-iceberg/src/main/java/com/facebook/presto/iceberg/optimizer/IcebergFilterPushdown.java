@@ -78,11 +78,10 @@ import static com.facebook.presto.expressions.LogicalRowExpressions.TRUE_CONSTAN
 import static com.facebook.presto.expressions.LogicalRowExpressions.and;
 import static com.facebook.presto.expressions.LogicalRowExpressions.extractConjuncts;
 import static com.facebook.presto.expressions.RowExpressionNodeInliner.replaceExpression;
-import static com.facebook.presto.iceberg.IcebergSessionProperties.getWorkerType;
+import static com.facebook.presto.iceberg.IcebergSessionProperties.isPushdownFilterEnabled;
 import static com.facebook.presto.iceberg.IcebergUtil.getHiveIcebergTable;
 import static com.facebook.presto.iceberg.IcebergUtil.getNativeIcebergTable;
 import static com.facebook.presto.iceberg.IcebergWarningCode.ICEBERG_TABLESCAN_CONVERTED_TO_VALUESNODE;
-import static com.facebook.presto.iceberg.WorkerType.NATIVE;
 import static com.facebook.presto.spi.ConnectorPlanRewriter.rewriteWith;
 import static com.facebook.presto.spi.StandardErrorCode.DIVISION_BY_ZERO;
 import static com.facebook.presto.spi.StandardErrorCode.GENERIC_INTERNAL_ERROR;
@@ -142,7 +141,7 @@ public class IcebergFilterPushdown
     @Override
     public PlanNode optimize(PlanNode maxSubplan, ConnectorSession session, VariableAllocator variableAllocator, PlanNodeIdAllocator idAllocator)
     {
-        if (!getWorkerType(session).equals(NATIVE)) {
+        if (!isPushdownFilterEnabled(session)) {
             return maxSubplan;
         }
         return rewriteWith(new IcebergFilterPushdownRewriter(session, idAllocator), maxSubplan);

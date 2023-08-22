@@ -37,8 +37,7 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 import static com.facebook.presto.expressions.LogicalRowExpressions.TRUE_CONSTANT;
-import static com.facebook.presto.iceberg.IcebergSessionProperties.getWorkerType;
-import static com.facebook.presto.iceberg.WorkerType.JAVA;
+import static com.facebook.presto.iceberg.IcebergSessionProperties.isPushdownFilterEnabled;
 import static com.facebook.presto.spi.ConnectorPlanRewriter.rewriteWith;
 import static java.util.Objects.requireNonNull;
 
@@ -59,7 +58,7 @@ public class IcebergPlanOptimizer
     @Override
     public PlanNode optimize(PlanNode maxSubplan, ConnectorSession session, VariableAllocator variableAllocator, PlanNodeIdAllocator idAllocator)
     {
-        if (!getWorkerType(session).equals(JAVA)) {
+        if (isPushdownFilterEnabled(session)) {
             return maxSubplan;
         }
         return rewriteWith(new FilterPushdownRewriter(functionResolution, rowExpressionService, typeManager, idAllocator, session), maxSubplan);

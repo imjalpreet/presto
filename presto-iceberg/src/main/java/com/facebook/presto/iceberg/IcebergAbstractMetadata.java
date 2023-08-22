@@ -66,7 +66,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static com.facebook.presto.common.type.BigintType.BIGINT;
 import static com.facebook.presto.expressions.LogicalRowExpressions.TRUE_CONSTANT;
 import static com.facebook.presto.iceberg.IcebergColumnHandle.primitiveIcebergColumnHandle;
-import static com.facebook.presto.iceberg.IcebergSessionProperties.getWorkerType;
+import static com.facebook.presto.iceberg.IcebergSessionProperties.isPushdownFilterEnabled;
 import static com.facebook.presto.iceberg.IcebergTableProperties.FILE_FORMAT_PROPERTY;
 import static com.facebook.presto.iceberg.IcebergTableProperties.FORMAT_VERSION;
 import static com.facebook.presto.iceberg.IcebergTableProperties.LOCATION_PROPERTY;
@@ -77,7 +77,6 @@ import static com.facebook.presto.iceberg.IcebergUtil.resolveSnapshotIdByName;
 import static com.facebook.presto.iceberg.PartitionFields.toPartitionFields;
 import static com.facebook.presto.iceberg.TypeConverter.toIcebergType;
 import static com.facebook.presto.iceberg.TypeConverter.toPrestoType;
-import static com.facebook.presto.iceberg.WorkerType.NATIVE;
 import static com.facebook.presto.spi.StandardErrorCode.NOT_SUPPORTED;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.common.collect.ImmutableMap.toImmutableMap;
@@ -120,7 +119,7 @@ public abstract class IcebergAbstractMetadata
                 .map(IcebergColumnHandle.class::cast)
                 .collect(toImmutableMap(IcebergColumnHandle::getName, Functions.identity()));
 
-        ConnectorTableLayout layout = new ConnectorTableLayout(new IcebergTableLayoutHandle(constraint.getSummary().transform(IcebergAbstractMetadata::toSubfield), TRUE_CONSTANT, predicateColumns, Optional.empty(), true, handle));
+        ConnectorTableLayout layout = new ConnectorTableLayout(new IcebergTableLayoutHandle(constraint.getSummary().transform(IcebergAbstractMetadata::toSubfield), TRUE_CONSTANT, predicateColumns, Optional.empty(), isPushdownFilterEnabled(session), handle));
         return ImmutableList.of(new ConnectorTableLayoutResult(layout, constraint.getSummary()));
     }
 
@@ -302,7 +301,7 @@ public abstract class IcebergAbstractMetadata
     @Override
     public boolean isLegacyGetLayoutSupported(ConnectorSession session, ConnectorTableHandle tableHandle)
     {
-        return !getWorkerType(session).equals(NATIVE);
+        return !isPushdownFilterEnabled(session);
     }
 
     protected List<ColumnMetadata> getColumnMetadatas(org.apache.iceberg.Table table)

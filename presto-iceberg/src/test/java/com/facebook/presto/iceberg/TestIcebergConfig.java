@@ -27,8 +27,6 @@ import static com.facebook.presto.iceberg.CatalogType.HADOOP;
 import static com.facebook.presto.iceberg.CatalogType.HIVE;
 import static com.facebook.presto.iceberg.IcebergFileFormat.ORC;
 import static com.facebook.presto.iceberg.IcebergFileFormat.PARQUET;
-import static com.facebook.presto.iceberg.WorkerType.JAVA;
-import static com.facebook.presto.iceberg.WorkerType.NATIVE;
 
 public class TestIcebergConfig
 {
@@ -45,7 +43,7 @@ public class TestIcebergConfig
                 .setMaxPartitionsPerWriter(100)
                 .setMinimumAssignedSplitWeight(0.05)
                 .setParquetDereferencePushdownEnabled(true)
-                .setWorkerType(JAVA));
+                .setPushdownFilterEnabled(false));
     }
 
     @Test
@@ -61,7 +59,7 @@ public class TestIcebergConfig
                 .put("iceberg.max-partitions-per-writer", "222")
                 .put("iceberg.minimum-assigned-split-weight", "0.01")
                 .put("iceberg.enable-parquet-dereference-pushdown", "false")
-                .put("iceberg.execution.worker.type", "NATIVE")
+                .put("iceberg.pushdown-filter-enabled", "true")
                 .build();
 
         IcebergConfig expected = new IcebergConfig()
@@ -74,7 +72,7 @@ public class TestIcebergConfig
                 .setMaxPartitionsPerWriter(222)
                 .setMinimumAssignedSplitWeight(0.01)
                 .setParquetDereferencePushdownEnabled(false)
-                .setWorkerType(NATIVE);
+                .setPushdownFilterEnabled(true);
 
         assertFullMapping(properties, expected);
     }
