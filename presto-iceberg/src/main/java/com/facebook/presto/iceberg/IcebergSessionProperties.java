@@ -83,6 +83,7 @@ public final class IcebergSessionProperties
     public static final String READ_MASKED_VALUE_ENABLED = "read_null_masked_parquet_encrypted_value_enabled";
     public static final String PARQUET_DEREFERENCE_PUSHDOWN_ENABLED = "parquet_dereference_pushdown_enabled";
     public static final String MERGE_ON_READ_MODE_ENABLED = "merge_on_read_enabled";
+    public static final String PUSHDOWN_FILTER_ENABLED = "pushdown_filter_enabled";
     public static final String HIVE_METASTORE_STATISTICS_MERGE_STRATEGY = "hive_statistics_merge_strategy";
     private final List<PropertyMetadata<?>> sessionProperties;
 
@@ -303,7 +304,12 @@ public final class IcebergSessionProperties
                         icebergConfig.getHiveStatisticsMergeStrategy(),
                         false,
                         val -> HiveStatisticsMergeStrategy.valueOf((String) val),
-                        HiveStatisticsMergeStrategy::name));
+                        HiveStatisticsMergeStrategy::name),
+                booleanProperty(
+                        PUSHDOWN_FILTER_ENABLED,
+                        "Experimental: Enable Filter Pushdown for Iceberg. This is only supported with Native Worker.",
+                        icebergConfig.isPushdownFilterEnabled(),
+                        false));
     }
 
     public List<PropertyMetadata<?>> getSessionProperties()
@@ -489,5 +495,10 @@ public final class IcebergSessionProperties
     public static HiveStatisticsMergeStrategy getHiveStatisticsMergeStrategy(ConnectorSession session)
     {
         return session.getProperty(HIVE_METASTORE_STATISTICS_MERGE_STRATEGY, HiveStatisticsMergeStrategy.class);
+    }
+
+    public static boolean isPushdownFilterEnabled(ConnectorSession session)
+    {
+        return session.getProperty(PUSHDOWN_FILTER_ENABLED, Boolean.class);
     }
 }
