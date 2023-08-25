@@ -15,6 +15,7 @@ package com.facebook.presto.iceberg;
 
 import com.facebook.airlift.json.JsonCodec;
 import com.facebook.airlift.log.Logger;
+import com.facebook.presto.common.Subfield;
 import com.facebook.presto.common.type.TypeManager;
 import com.facebook.presto.hive.HiveWrittenPartitions;
 import com.facebook.presto.spi.ColumnHandle;
@@ -37,6 +38,7 @@ import com.facebook.presto.spi.TableNotFoundException;
 import com.facebook.presto.spi.connector.ConnectorMetadata;
 import com.facebook.presto.spi.connector.ConnectorOutputMetadata;
 import com.facebook.presto.spi.statistics.ComputedStatistics;
+import com.google.common.base.Functions;
 import com.google.common.base.VerifyException;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -62,7 +64,9 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static com.facebook.presto.common.type.BigintType.BIGINT;
+import static com.facebook.presto.expressions.LogicalRowExpressions.TRUE_CONSTANT;
 import static com.facebook.presto.iceberg.IcebergColumnHandle.primitiveIcebergColumnHandle;
+import static com.facebook.presto.iceberg.IcebergSessionProperties.isPushdownFilterEnabled;
 import static com.facebook.presto.iceberg.IcebergTableProperties.FILE_FORMAT_PROPERTY;
 import static com.facebook.presto.iceberg.IcebergTableProperties.FORMAT_VERSION;
 import static com.facebook.presto.iceberg.IcebergTableProperties.LOCATION_PROPERTY;
@@ -75,6 +79,7 @@ import static com.facebook.presto.iceberg.TypeConverter.toIcebergType;
 import static com.facebook.presto.iceberg.TypeConverter.toPrestoType;
 import static com.facebook.presto.spi.StandardErrorCode.NOT_SUPPORTED;
 import static com.google.common.collect.ImmutableList.toImmutableList;
+import static com.google.common.collect.ImmutableMap.toImmutableMap;
 import static java.util.Collections.singletonList;
 import static java.util.Objects.requireNonNull;
 
@@ -96,12 +101,31 @@ public abstract class IcebergAbstractMetadata
         this.commitTaskCodec = requireNonNull(commitTaskCodec, "commitTaskCodec is null");
     }
 
+    /**
+     * This class implements the default implementation for getTableLayouts which will be used in the case of a Java Worker
+     *
+     * @param session
+     * @param table
+     * @param constraint
+     * @param desiredColumns
+     * @return List<ConnectorTableLayoutResult>
+     */
     @Override
     public List<ConnectorTableLayoutResult> getTableLayouts(ConnectorSession session, ConnectorTableHandle table, Constraint<ColumnHandle> constraint, Optional<Set<ColumnHandle>> desiredColumns)
     {
         IcebergTableHandle handle = (IcebergTableHandle) table;
-        ConnectorTableLayout layout = new ConnectorTableLayout(new IcebergTableLayoutHandle(handle, constraint.getSummary()));
+
+        Map<String, IcebergColumnHandle> predicateColumns = constraint.getSummary().getDomains().get().keySet().stream()
+                .map(IcebergColumnHandle.class::cast)
+                .collect(toImmutableMap(IcebergColumnHandle::getName, Functions.identity()));
+
+        ConnectorTableLayout layout = new ConnectorTableLayout(new IcebergTableLayoutHandle(constraint.getSummary().transform(IcebergAbstractMetadata::toSubfield), TRUE_CONSTANT, predicateColumns, Optional.empty(), isPushdownFilterEnabled(session), handle));
         return ImmutableList.of(new ConnectorTableLayoutResult(layout, constraint.getSummary()));
+    }
+
+    public static Subfield toSubfield(ColumnHandle columnHandle)
+    {
+        return new Subfield(((IcebergColumnHandle) columnHandle).getName(), ImmutableList.of());
     }
 
     @Override
