@@ -241,7 +241,7 @@ public class IcebergHiveMetadata
                 tableName,
                 SchemaParser.toJson(metadata.schema()),
                 PartitionSpecParser.toJson(metadata.spec()),
-                getColumns(metadata.schema(), typeManager),
+                getColumns(metadata.schema(), metadata.spec(), typeManager),
                 targetPath,
                 fileFormat,
                 metadata.properties());

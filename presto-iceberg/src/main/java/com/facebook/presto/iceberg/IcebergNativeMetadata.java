@@ -137,7 +137,7 @@ public class IcebergNativeMetadata
     {
         IcebergTableHandle table = (IcebergTableHandle) tableHandle;
         Table icebergTable = getNativeIcebergTable(resourceFactory, session, table.getSchemaTableName());
-        return getColumns(icebergTable.schema(), typeManager).stream()
+        return getColumns(icebergTable.schema(), icebergTable.spec(), typeManager).stream()
                 .collect(toImmutableMap(IcebergColumnHandle::getName, identity()));
     }
 
@@ -214,7 +214,7 @@ public class IcebergNativeMetadata
                 tableName,
                 SchemaParser.toJson(icebergTable.schema()),
                 PartitionSpecParser.toJson(icebergTable.spec()),
-                getColumns(icebergTable.schema(), typeManager),
+                getColumns(icebergTable.schema(), icebergTable.spec(), typeManager),
                 icebergTable.location(),
                 fileFormat,
                 icebergTable.properties());
