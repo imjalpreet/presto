@@ -14,18 +14,14 @@
 package com.facebook.presto.iceberg.optimizer;
 
 import com.facebook.presto.common.Subfield;
-import com.facebook.presto.common.predicate.Domain;
-import com.facebook.presto.common.predicate.NullableValue;
 import com.facebook.presto.common.predicate.TupleDomain;
 import com.facebook.presto.common.type.TypeManager;
-import com.facebook.presto.expressions.DefaultRowExpressionTraversalVisitor;
-import com.facebook.presto.expressions.LogicalRowExpressions;
 import com.facebook.presto.hive.HdfsEnvironment;
-import com.facebook.presto.hive.SubfieldExtractor;
-import com.facebook.presto.hive.metastore.ExtendedHiveMetastore;
+import com.facebook.presto.hive.util.FilterPushdownUtils.ConnectorPushdownFilterResult;
+import com.facebook.presto.hive.util.FilterPushdownUtils.Result;
+import com.facebook.presto.hive.util.FilterPushdownUtils.RowExpressionResult;
 import com.facebook.presto.iceberg.IcebergAbstractMetadata;
 import com.facebook.presto.iceberg.IcebergColumnHandle;
-import com.facebook.presto.iceberg.IcebergHiveMetadata;
 import com.facebook.presto.iceberg.IcebergResourceFactory;
 import com.facebook.presto.iceberg.IcebergTableHandle;
 import com.facebook.presto.iceberg.IcebergTableLayoutHandle;
@@ -38,9 +34,7 @@ import com.facebook.presto.spi.ConnectorTableHandle;
 import com.facebook.presto.spi.ConnectorTableLayout;
 import com.facebook.presto.spi.ConnectorTableLayoutHandle;
 import com.facebook.presto.spi.Constraint;
-import com.facebook.presto.spi.PrestoException;
 import com.facebook.presto.spi.PrestoWarning;
-import com.facebook.presto.spi.SchemaTableName;
 import com.facebook.presto.spi.TableHandle;
 import com.facebook.presto.spi.VariableAllocator;
 import com.facebook.presto.spi.connector.ConnectorMetadata;
@@ -52,65 +46,40 @@ import com.facebook.presto.spi.plan.PlanNode;
 import com.facebook.presto.spi.plan.PlanNodeIdAllocator;
 import com.facebook.presto.spi.plan.TableScanNode;
 import com.facebook.presto.spi.plan.ValuesNode;
-import com.facebook.presto.spi.relation.ConstantExpression;
-import com.facebook.presto.spi.relation.DomainTranslator;
 import com.facebook.presto.spi.relation.RowExpression;
 import com.facebook.presto.spi.relation.RowExpressionService;
 import com.facebook.presto.spi.relation.VariableReferenceExpression;
 import com.google.common.base.Functions;
 import com.google.common.collect.BiMap;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableMap;
-import com.google.common.collect.ImmutableSet;
 
-import java.util.HashSet;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.function.Function;
 
-import static com.facebook.presto.common.predicate.TupleDomain.withColumnDomains;
-import static com.facebook.presto.expressions.DynamicFilters.isDynamicFilter;
-import static com.facebook.presto.expressions.DynamicFilters.removeNestedDynamicFilters;
 import static com.facebook.presto.expressions.LogicalRowExpressions.FALSE_CONSTANT;
 import static com.facebook.presto.expressions.LogicalRowExpressions.TRUE_CONSTANT;
-import static com.facebook.presto.expressions.LogicalRowExpressions.and;
-import static com.facebook.presto.expressions.LogicalRowExpressions.extractConjuncts;
 import static com.facebook.presto.expressions.RowExpressionNodeInliner.replaceExpression;
+import static com.facebook.presto.hive.util.FilterPushdownUtils.checkConstantBooleanExpression;
+import static com.facebook.presto.hive.util.FilterPushdownUtils.extractDeterministicConjuncts;
+import static com.facebook.presto.hive.util.FilterPushdownUtils.getDomainPredicate;
+import static com.facebook.presto.hive.util.FilterPushdownUtils.getEntireColumnDomain;
+import static com.facebook.presto.hive.util.FilterPushdownUtils.getPlanNode;
+import static com.facebook.presto.hive.util.FilterPushdownUtils.getPredicateColumnNames;
+import static com.facebook.presto.hive.util.FilterPushdownUtils.getRowExpressionResult;
+import static com.facebook.presto.hive.util.FilterPushdownUtils.getSymbolToColumnMapping;
+import static com.facebook.presto.hive.util.FilterPushdownUtils.getTableScanNode;
 import static com.facebook.presto.iceberg.IcebergSessionProperties.isPushdownFilterEnabled;
-import static com.facebook.presto.iceberg.IcebergUtil.getHiveIcebergTable;
-import static com.facebook.presto.iceberg.IcebergUtil.getNativeIcebergTable;
 import static com.facebook.presto.iceberg.IcebergWarningCode.ICEBERG_TABLESCAN_CONVERTED_TO_VALUESNODE;
 import static com.facebook.presto.spi.ConnectorPlanRewriter.rewriteWith;
-import static com.facebook.presto.spi.StandardErrorCode.DIVISION_BY_ZERO;
-import static com.facebook.presto.spi.StandardErrorCode.GENERIC_INTERNAL_ERROR;
-import static com.facebook.presto.spi.StandardErrorCode.INVALID_CAST_ARGUMENT;
-import static com.facebook.presto.spi.StandardErrorCode.INVALID_FUNCTION_ARGUMENT;
-import static com.facebook.presto.spi.StandardErrorCode.NUMERIC_VALUE_OUT_OF_RANGE;
-import static com.facebook.presto.spi.relation.ExpressionOptimizer.Level.OPTIMIZED;
-import static com.google.common.base.MoreObjects.toStringHelper;
-import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkState;
-import static com.google.common.collect.ImmutableBiMap.toImmutableBiMap;
 import static com.google.common.collect.ImmutableMap.toImmutableMap;
-import static com.google.common.collect.ImmutableSet.toImmutableSet;
-import static com.google.common.collect.Sets.intersection;
 import static java.lang.String.format;
-import static java.util.Collections.emptyList;
 import static java.util.Objects.requireNonNull;
 
 public class IcebergFilterPushdown
         implements ConnectorPlanOptimizer
 {
-    private static final ConnectorTableLayout EMPTY_TABLE_LAYOUT = new ConnectorTableLayout(
-            new ConnectorTableLayoutHandle() {},
-            Optional.empty(),
-            TupleDomain.none(),
-            Optional.empty(),
-            Optional.empty(),
-            Optional.empty(),
-            emptyList());
     protected IcebergTransactionManager icebergTransactionManager;
     protected final RowExpressionService rowExpressionService;
     protected final StandardFunctionResolution functionResolution;
@@ -147,11 +116,6 @@ public class IcebergFilterPushdown
         return rewriteWith(new IcebergFilterPushdownRewriter(session, idAllocator), maxSubplan);
     }
 
-    protected boolean useDynamicFilter(RowExpression expression, ConnectorTableHandle tableHandle, Map<String, ColumnHandle> columnHandleMap)
-    {
-        return false;
-    }
-
     protected ConnectorPushdownFilterResult pushdownFilter(
             ConnectorSession session,
             IcebergAbstractMetadata metadata,
@@ -160,112 +124,39 @@ public class IcebergFilterPushdown
             RowExpression filter,
             Optional<ConnectorTableLayoutHandle> currentLayoutHandle)
     {
-        checkArgument(!FALSE_CONSTANT.equals(filter), "Cannot pushdown filter that is always false");
-        if (TRUE_CONSTANT.equals(filter) && currentLayoutHandle.isPresent()) {
-            return new ConnectorPushdownFilterResult(metadata.getTableLayout(session, currentLayoutHandle.get()), TRUE_CONSTANT);
+        Result result = checkConstantBooleanExpression(rowExpressionService, functionResolution, filter, currentLayoutHandle, metadata, session);
+        if (result.getConnectorPushdownFilterResult() != null) {
+            return result.getConnectorPushdownFilterResult();
         }
 
-        // Split the filter into 3 groups of conjuncts:
-        //  - range filters that apply to entire columns,
-        //  - range filters that apply to subfields,
-        //  - the rest. Intersect these with possibly pre-existing filters.
-        DomainTranslator.ExtractionResult<Subfield> decomposedFilter = rowExpressionService.getDomainTranslator()
-                .fromPredicate(session, filter, new SubfieldExtractor(functionResolution, rowExpressionService.getExpressionOptimizer(), session).toColumnExtractor());
-        if (currentLayoutHandle.isPresent()) {
-            IcebergTableLayoutHandle currentIcebergLayout = (IcebergTableLayoutHandle) currentLayoutHandle.get();
-            decomposedFilter = intersectExtractionResult(new DomainTranslator.ExtractionResult(currentIcebergLayout.getDomainPredicate(), currentIcebergLayout.getRemainingPredicate()), decomposedFilter);
-        }
-
-        if (decomposedFilter.getTupleDomain().isNone()) {
-            return new ConnectorPushdownFilterResult(EMPTY_TABLE_LAYOUT, FALSE_CONSTANT);
-        }
-
-        RowExpression optimizedRemainingExpression = rowExpressionService.getExpressionOptimizer().optimize(decomposedFilter.getRemainingExpression(), OPTIMIZED, session);
-        if (optimizedRemainingExpression instanceof ConstantExpression) {
-            ConstantExpression constantExpression = (ConstantExpression) optimizedRemainingExpression;
-            if (FALSE_CONSTANT.equals(constantExpression) || constantExpression.getValue() == null) {
-                return new ConnectorPushdownFilterResult(EMPTY_TABLE_LAYOUT, FALSE_CONSTANT);
-            }
-        }
         Map<String, ColumnHandle> columnHandles = metadata.getColumnHandles(session, tableHandle);
-        TupleDomain<ColumnHandle> entireColumnDomain = decomposedFilter.getTupleDomain()
-                .transform(subfield -> isEntireColumn(subfield) ? subfield.getRootName() : null)
-                .transform(columnHandles::get);
+        TupleDomain<ColumnHandle> entireColumnDomain = getEntireColumnDomain(result, columnHandles);
 
         Constraint<ColumnHandle> constraint = new Constraint<>(entireColumnDomain);
 
         // Extract deterministic conjuncts that apply to partition columns and specify these as Constraint#predicate
-        if (!TRUE_CONSTANT.equals(decomposedFilter.getRemainingExpression())) {
-            LogicalRowExpressions logicalRowExpressions = new LogicalRowExpressions(rowExpressionService.getDeterminismEvaluator(), functionResolution, functionMetadataManager);
-            RowExpression deterministicPredicate = logicalRowExpressions.filterDeterministicConjuncts(decomposedFilter.getRemainingExpression());
-            if (!TRUE_CONSTANT.equals(deterministicPredicate)) {
-                ConstraintEvaluator evaluator = new ConstraintEvaluator(rowExpressionService, session, columnHandles, deterministicPredicate);
-                constraint = new Constraint<>(entireColumnDomain, evaluator::isCandidate);
-            }
-        }
-
-        org.apache.iceberg.Table icebergTable;
-        if (metadata instanceof IcebergHiveMetadata) {
-            ExtendedHiveMetastore metastore = ((IcebergHiveMetadata) icebergTransactionManager.get(transactionHandle)).getMetastore();
-            icebergTable = getHiveIcebergTable(metastore, hdfsEnvironment, session, ((IcebergTableHandle) tableHandle).getSchemaTableName());
-        }
-        else {
-            icebergTable = getNativeIcebergTable(resourceFactory, session, ((IcebergTableHandle) tableHandle).getSchemaTableName());
-        }
+        constraint = extractDeterministicConjuncts(
+                rowExpressionService,
+                functionResolution,
+                functionMetadataManager,
+                session,
+                result,
+                columnHandles,
+                entireColumnDomain,
+                constraint);
 
         TupleDomain<ColumnHandle> regularColumnPredicate = TupleDomain.withColumnDomains(constraint.getSummary().getDomains().get());
 
-        TupleDomain<Subfield> domainPredicate = withColumnDomains(ImmutableMap.<Subfield, Domain>builder()
-                .putAll(regularColumnPredicate
-                        .transform(IcebergFilterPushdown::toSubfield)
-                        .getDomains()
-                        .orElse(ImmutableMap.of()))
-                .putAll(decomposedFilter.getTupleDomain()
-                        .transform(subfield -> !isEntireColumn(subfield) ? subfield : null)
-                        .getDomains()
-                        .orElse(ImmutableMap.of()))
-                .build());
+        TupleDomain<Subfield> domainPredicate = getDomainPredicate(result, regularColumnPredicate);
 
-        Set<String> predicateColumnNames = new HashSet<>();
-        domainPredicate.getDomains().get().keySet().stream()
-                .map(Subfield::getRootName)
-                .forEach(predicateColumnNames::add);
-        // Include only columns referenced in the optimized expression. Although the expression is sent to the worker node
-        // unoptimized, the worker is expected to optimize the expression before executing.
-        extractVariableExpressions(optimizedRemainingExpression).stream()
-                .map(VariableReferenceExpression::getName)
-                .forEach(predicateColumnNames::add);
+        Set<String> predicateColumnNames = getPredicateColumnNames(result, domainPredicate);
 
         Map<String, IcebergColumnHandle> predicateColumns = predicateColumnNames.stream()
                 .map(columnHandles::get)
                 .map(IcebergColumnHandle.class::cast)
                 .collect(toImmutableMap(IcebergColumnHandle::getName, Functions.identity()));
 
-        IcebergTableHandle icebergTableHandle = (IcebergTableHandle) tableHandle;
-        SchemaTableName tableName = icebergTableHandle.getSchemaTableName();
-
-        LogicalRowExpressions logicalRowExpressions = new LogicalRowExpressions(rowExpressionService.getDeterminismEvaluator(), functionResolution, functionMetadataManager);
-        List<RowExpression> conjuncts = extractConjuncts(decomposedFilter.getRemainingExpression());
-        ImmutableList.Builder<RowExpression> dynamicConjuncts = ImmutableList.builder();
-        ImmutableList.Builder<RowExpression> staticConjuncts = ImmutableList.builder();
-        for (RowExpression conjunct : conjuncts) {
-            if (isDynamicFilter(conjunct) || useDynamicFilter(conjunct, tableHandle, columnHandles)) {
-                dynamicConjuncts.add(conjunct);
-            }
-            else {
-                staticConjuncts.add(conjunct);
-            }
-        }
-        RowExpression dynamicFilterExpression = logicalRowExpressions.combineConjuncts(dynamicConjuncts.build());
-        RowExpression remainingExpression = logicalRowExpressions.combineConjuncts(staticConjuncts.build());
-        remainingExpression = removeNestedDynamicFilters(remainingExpression);
-
-        String layoutString = createTableLayoutString(
-                session,
-                rowExpressionService,
-                tableName,
-                remainingExpression,
-                domainPredicate);
+        RowExpressionResult rowExpressionResult = getRowExpressionResult(rowExpressionService, functionResolution, functionMetadataManager, tableHandle, result, columnHandles);
 
         Optional<Set<IcebergColumnHandle>> requestedColumns = currentLayoutHandle.map(layout -> ((IcebergTableLayoutHandle) layout).getRequestedColumns()).orElse(Optional.empty());
 
@@ -274,30 +165,12 @@ public class IcebergFilterPushdown
                         session,
                         new IcebergTableLayoutHandle(
                                 domainPredicate,
-                                remainingExpression,
+                                rowExpressionResult.getRemainingExpression(),
                                 predicateColumns,
                                 requestedColumns,
                                 true,
                                 (IcebergTableHandle) tableHandle)),
-                dynamicFilterExpression);
-    }
-
-    public static Set<VariableReferenceExpression> extractVariableExpressions(RowExpression expression)
-    {
-        ImmutableSet.Builder<VariableReferenceExpression> builder = ImmutableSet.builder();
-        expression.accept(new VariableReferenceBuilderVisitor(), builder);
-        return builder.build();
-    }
-
-    private static class VariableReferenceBuilderVisitor
-            extends DefaultRowExpressionTraversalVisitor<ImmutableSet.Builder<VariableReferenceExpression>>
-    {
-        @Override
-        public Void visitVariableReference(VariableReferenceExpression variable, ImmutableSet.Builder<VariableReferenceExpression> builder)
-        {
-            builder.add(variable);
-            return null;
-        }
+                rowExpressionResult.getDynamicFilterExpression());
     }
 
     private static String getColumnName(ConnectorSession session, IcebergAbstractMetadata metadata, ConnectorTableHandle tableHandle, ColumnHandle columnHandle)
@@ -310,62 +183,6 @@ public class IcebergFilterPushdown
         ConnectorMetadata metadata = icebergTransactionManager.get(tableHandle.getTransaction());
         checkState(metadata instanceof IcebergAbstractMetadata, "metadata must be IcebergAbstractMetadata");
         return (IcebergAbstractMetadata) metadata;
-    }
-
-    private static boolean isEntireColumn(Subfield subfield)
-    {
-        return subfield.getPath().isEmpty();
-    }
-
-    private static DomainTranslator.ExtractionResult intersectExtractionResult(DomainTranslator.ExtractionResult left, DomainTranslator.ExtractionResult right)
-    {
-        RowExpression newRemainingExpression;
-        if (right.getRemainingExpression().equals(TRUE_CONSTANT)) {
-            newRemainingExpression = left.getRemainingExpression();
-        }
-        else if (left.getRemainingExpression().equals(TRUE_CONSTANT)) {
-            newRemainingExpression = right.getRemainingExpression();
-        }
-        else {
-            newRemainingExpression = and(left.getRemainingExpression(), right.getRemainingExpression());
-        }
-        return new DomainTranslator.ExtractionResult(left.getTupleDomain().intersect(right.getTupleDomain()), newRemainingExpression);
-    }
-
-    private static String createTableLayoutString(
-            ConnectorSession session,
-            RowExpressionService rowExpressionService,
-            SchemaTableName tableName,
-            RowExpression remainingPredicate,
-            TupleDomain<Subfield> domainPredicate)
-    {
-        return toStringHelper(tableName.toString())
-                .omitNullValues()
-                .add("filter", TRUE_CONSTANT.equals(remainingPredicate) ? null : rowExpressionService.formatRowExpression(session, remainingPredicate))
-                .add("domains", domainPredicate.isAll() ? null : domainPredicate.toString(session.getSqlFunctionProperties()))
-                .toString();
-    }
-
-    public static class ConnectorPushdownFilterResult
-    {
-        private final ConnectorTableLayout layout;
-        private final RowExpression unenforcedConstraint;
-
-        public ConnectorPushdownFilterResult(ConnectorTableLayout layout, RowExpression unenforcedConstraint)
-        {
-            this.layout = requireNonNull(layout, "layout is null");
-            this.unenforcedConstraint = requireNonNull(unenforcedConstraint, "unenforcedConstraint is null");
-        }
-
-        public ConnectorTableLayout getLayout()
-        {
-            return layout;
-        }
-
-        public RowExpression getUnenforcedConstraint()
-        {
-            return unenforcedConstraint;
-        }
     }
 
     private class IcebergFilterPushdownRewriter
@@ -393,10 +210,7 @@ public class IcebergFilterPushdown
             TableHandle handle = tableScan.getTable();
             IcebergAbstractMetadata icebergAbstractMetadata = getMetadata(handle);
 
-            BiMap<VariableReferenceExpression, VariableReferenceExpression> symbolToColumnMapping = tableScan.getAssignments().entrySet().stream()
-                    .collect(toImmutableBiMap(
-                            Map.Entry::getKey,
-                            entry -> new VariableReferenceExpression(Optional.empty(), getColumnName(session, icebergAbstractMetadata, handle.getConnectorHandle(), entry.getValue()), entry.getKey().getType())));
+            BiMap<VariableReferenceExpression, VariableReferenceExpression> symbolToColumnMapping = getSymbolToColumnMapping(tableScan, handle, icebergAbstractMetadata, session);
 
             RowExpression replacedExpression = replaceExpression(expression, symbolToColumnMapping);
             // replaceExpression() may further optimize the expression; if the resulting expression is always false, then return empty Values node
@@ -418,22 +232,7 @@ public class IcebergFilterPushdown
                 return new ValuesNode(tableScan.getSourceLocation(), idAllocator.getNextId(), tableScan.getOutputVariables(), ImmutableList.of(), Optional.of(tableScan.getTable().getConnectorHandle().toString()));
             }
 
-            TableScanNode node = new TableScanNode(
-                    tableScan.getSourceLocation(),
-                    tableScan.getId(),
-                    new TableHandle(handle.getConnectorId(), handle.getConnectorHandle(), handle.getTransaction(), Optional.of(pushdownFilterResult.getLayout().getHandle())),
-                    tableScan.getOutputVariables(),
-                    tableScan.getAssignments(),
-                    tableScan.getTableConstraints(),
-                    layout.getPredicate(),
-                    TupleDomain.all());
-
-            RowExpression unenforcedFilter = pushdownFilterResult.getUnenforcedConstraint();
-            if (!TRUE_CONSTANT.equals(unenforcedFilter)) {
-                return new FilterNode(tableScan.getSourceLocation(), idAllocator.getNextId(), node, replaceExpression(unenforcedFilter, symbolToColumnMapping.inverse()));
-            }
-
-            return node;
+            return getPlanNode(tableScan, handle, symbolToColumnMapping, pushdownFilterResult, layout, idAllocator);
         }
 
         @Override
@@ -453,107 +252,7 @@ public class IcebergFilterPushdown
                 return new ValuesNode(tableScan.getSourceLocation(), idAllocator.getNextId(), tableScan.getOutputVariables(), ImmutableList.of(), Optional.of(tableScan.getTable().getConnectorHandle().toString()));
             }
 
-//            //
-//            TupleDomain<IcebergColumnHandle> predicate = ((IcebergTableLayoutHandle) pushdownFilterResult.getLayout().getHandle()).getDomainPredicate()
-//                    .transform(subfield -> isEntireColumn(subfield) ? subfield.getRootName() : null)
-//                    .transform(((IcebergTableLayoutHandle) pushdownFilterResult.getLayout().getHandle()).getPredicateColumns()::get)
-//                    .transform(IcebergColumnHandle.class::cast);
-//
-//            IcebergTableHandle oldTableHandle = (IcebergTableHandle) handle.getConnectorHandle();
-//            IcebergTableHandle newTableHandle = new IcebergTableHandle(
-//                    oldTableHandle.getSchemaName(),
-//                    oldTableHandle.getTableName(),
-//                    oldTableHandle.getTableType(),
-//                    oldTableHandle.getSnapshotId(),
-//                    predicate);
-//            //
-            TableScanNode node = new TableScanNode(
-                    tableScan.getSourceLocation(),
-                    tableScan.getId(),
-                    new TableHandle(handle.getConnectorId(), handle.getConnectorHandle(), handle.getTransaction(), Optional.of(pushdownFilterResult.getLayout().getHandle())),
-                    tableScan.getOutputVariables(),
-                    tableScan.getAssignments(),
-                    tableScan.getTableConstraints(),
-                    pushdownFilterResult.getLayout().getPredicate(),
-                    TupleDomain.all());
-
-            RowExpression unenforcedFilter = pushdownFilterResult.getUnenforcedConstraint();
-            if (!TRUE_CONSTANT.equals(unenforcedFilter)) {
-                throw new PrestoException(GENERIC_INTERNAL_ERROR, format("Unenforced filter found %s but not handled", unenforcedFilter));
-            }
-            return node;
-        }
-    }
-    private static Subfield toSubfield(ColumnHandle columnHandle)
-    {
-        return new Subfield(((IcebergColumnHandle) columnHandle).getName(), ImmutableList.of());
-    }
-
-    private static class ConstraintEvaluator
-    {
-        private final Map<String, ColumnHandle> assignments;
-        private final RowExpressionService evaluator;
-        private final ConnectorSession session;
-        private final RowExpression expression;
-        private final Set<ColumnHandle> arguments;
-
-        public ConstraintEvaluator(RowExpressionService evaluator, ConnectorSession session, Map<String, ColumnHandle> assignments, RowExpression expression)
-        {
-            this.assignments = assignments;
-            this.evaluator = evaluator;
-            this.session = session;
-            this.expression = expression;
-
-            arguments = ImmutableSet.copyOf(extractVariableExpressions(expression)).stream()
-                    .map(VariableReferenceExpression::getName)
-                    .map(assignments::get)
-                    .collect(toImmutableSet());
-        }
-
-        private boolean isCandidate(Map<ColumnHandle, NullableValue> bindings)
-        {
-            if (intersection(bindings.keySet(), arguments).isEmpty()) {
-                return true;
-            }
-
-            Function<VariableReferenceExpression, Object> variableResolver = variable -> {
-                ColumnHandle column = assignments.get(variable.getName());
-                checkArgument(column != null, "Missing column assignment for %s", variable);
-
-                if (!bindings.containsKey(column)) {
-                    return variable;
-                }
-
-                return bindings.get(column).getValue();
-            };
-
-            // Skip pruning if evaluation fails in a recoverable way. Failing here can cause
-            // spurious query failures for partitions that would otherwise be filtered out.
-            Object optimized = null;
-            try {
-                optimized = evaluator.getExpressionOptimizer().optimize(expression, OPTIMIZED, session, variableResolver);
-            }
-            catch (PrestoException e) {
-                propagateIfUnhandled(e);
-                return true;
-            }
-
-            // If any conjuncts evaluate to FALSE or null, then the whole predicate will never be true and so the partition should be pruned
-            return !Boolean.FALSE.equals(optimized) && optimized != null && (!(optimized instanceof ConstantExpression) || !((ConstantExpression) optimized).isNull());
-        }
-
-        private static void propagateIfUnhandled(PrestoException e)
-                throws PrestoException
-        {
-            int errorCode = e.getErrorCode().getCode();
-            if (errorCode == DIVISION_BY_ZERO.toErrorCode().getCode()
-                    || errorCode == INVALID_CAST_ARGUMENT.toErrorCode().getCode()
-                    || errorCode == INVALID_FUNCTION_ARGUMENT.toErrorCode().getCode()
-                    || errorCode == NUMERIC_VALUE_OUT_OF_RANGE.toErrorCode().getCode()) {
-                return;
-            }
-
-            throw e;
+            return getTableScanNode(tableScan, handle, pushdownFilterResult);
         }
     }
 }
