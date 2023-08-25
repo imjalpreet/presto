@@ -116,7 +116,7 @@ public class TableStatisticsMaker
                 .filter(column -> !identityPartitionIds.contains(column.fieldId()) && column.type().isPrimitiveType())
                 .collect(toImmutableList());
 
-        List<IcebergColumnHandle> columnHandles = getColumns(icebergTable.schema(), typeManager);
+        List<IcebergColumnHandle> columnHandles = getColumns(icebergTable.schema(), icebergTable.spec(), typeManager);
         Map<Integer, IcebergColumnHandle> idToColumnHandle = columnHandles.stream()
                 .collect(toImmutableMap(IcebergColumnHandle::getId, identity()));
 

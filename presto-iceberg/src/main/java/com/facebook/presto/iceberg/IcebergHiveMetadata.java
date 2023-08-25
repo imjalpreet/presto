@@ -307,7 +307,7 @@ public class IcebergHiveMetadata
                 tableName,
                 SchemaParser.toJson(metadata.schema()),
                 PartitionSpecParser.toJson(metadata.spec()),
-                getColumns(metadata.schema(), typeManager),
+                getColumns(metadata.schema(), metadata.spec(), typeManager),
                 targetPath,
                 fileFormat,
                 metadata.properties());
@@ -460,7 +460,12 @@ public class IcebergHiveMetadata
         TableStatistics icebergStatistics = TableStatisticsMaker.getTableStatistics(typeManager, constraint, handle, icebergTable, columnHandles.stream().map(IcebergColumnHandle.class::cast).collect(Collectors.toList()));
         HiveStatisticsMergeStrategy mergeStrategy = getHiveStatisticsMergeStrategy(session);
         return tableLayoutHandle.map(IcebergTableLayoutHandle.class::cast).map(layoutHandle -> {
-            TupleDomain<VariableReferenceExpression> predicate = layoutHandle.getTupleDomain().transform(icebergLayout -> {
+            TupleDomain<ColumnHandle> domainPredicate = layoutHandle.getDomainPredicate()
+                    .transform(subfield -> isEntireColumn(subfield) ? subfield.getRootName() : null)
+                    .transform(layoutHandle.getPredicateColumns()::get)
+                    .transform(ColumnHandle.class::cast);
+
+            TupleDomain<VariableReferenceExpression> predicate = domainPredicate.transform(icebergLayout -> {
                 IcebergColumnHandle columnHandle = (IcebergColumnHandle) icebergLayout;
                 return new VariableReferenceExpression(Optional.empty(), columnHandle.getName(), columnHandle.getType());
             });
