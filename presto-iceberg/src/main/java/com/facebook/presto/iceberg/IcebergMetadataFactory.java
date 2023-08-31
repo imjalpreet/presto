@@ -19,6 +19,8 @@ import com.facebook.presto.hive.HdfsEnvironment;
 import com.facebook.presto.hive.metastore.ExtendedHiveMetastore;
 import com.facebook.presto.spi.PrestoException;
 import com.facebook.presto.spi.connector.ConnectorMetadata;
+import com.facebook.presto.spi.function.StandardFunctionResolution;
+import com.facebook.presto.spi.relation.RowExpressionService;
 
 import javax.inject.Inject;
 
@@ -30,6 +32,8 @@ public class IcebergMetadataFactory
     private final ExtendedHiveMetastore metastore;
     private final HdfsEnvironment hdfsEnvironment;
     private final TypeManager typeManager;
+    private final StandardFunctionResolution functionResolution;
+    private final RowExpressionService rowExpressionService;
     private final JsonCodec<CommitTaskData> commitTaskCodec;
     private final IcebergResourceFactory resourceFactory;
     private final CatalogType catalogType;
@@ -41,12 +45,16 @@ public class IcebergMetadataFactory
             ExtendedHiveMetastore metastore,
             HdfsEnvironment hdfsEnvironment,
             TypeManager typeManager,
+            StandardFunctionResolution functionResolution,
+            RowExpressionService rowExpressionService,
             JsonCodec<CommitTaskData> commitTaskCodec)
     {
         this.resourceFactory = requireNonNull(resourceFactory, "resourceFactory is null");
         this.metastore = requireNonNull(metastore, "metastore is null");
         this.hdfsEnvironment = requireNonNull(hdfsEnvironment, "hdfsEnvironment is null");
         this.typeManager = requireNonNull(typeManager, "typeManager is null");
+        this.functionResolution = requireNonNull(functionResolution, "functionResolution is null");
+        this.rowExpressionService = requireNonNull(rowExpressionService, "rowExpressionService is null");
         this.commitTaskCodec = requireNonNull(commitTaskCodec, "commitTaskCodec is null");
         requireNonNull(config, "config is null");
         this.catalogType = config.getCatalogType();
@@ -57,9 +65,9 @@ public class IcebergMetadataFactory
         switch (catalogType) {
             case HADOOP:
             case NESSIE:
-                return new IcebergNativeMetadata(resourceFactory, typeManager, commitTaskCodec, catalogType);
+                return new IcebergNativeMetadata(resourceFactory, typeManager, functionResolution, rowExpressionService, commitTaskCodec, catalogType);
             case HIVE:
-                return new IcebergHiveMetadata(metastore, hdfsEnvironment, typeManager, commitTaskCodec);
+                return new IcebergHiveMetadata(metastore, hdfsEnvironment, typeManager, functionResolution, rowExpressionService, commitTaskCodec);
         }
         throw new PrestoException(NOT_SUPPORTED, "Unsupported Presto Iceberg catalog type " + catalogType);
     }

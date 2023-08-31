@@ -128,6 +128,11 @@ public abstract class IcebergAbstractMetadata
         return new Subfield(((IcebergColumnHandle) columnHandle).getName(), ImmutableList.of());
     }
 
+    protected static boolean isEntireColumn(Subfield subfield)
+    {
+        return subfield.getPath().isEmpty();
+    }
+
     @Override
     public ConnectorTableLayout getTableLayout(ConnectorSession session, ConnectorTableLayoutHandle handle)
     {
@@ -291,6 +296,12 @@ public abstract class IcebergAbstractMetadata
     public ConnectorTableHandle beginDelete(ConnectorSession session, ConnectorTableHandle tableHandle)
     {
         throw new PrestoException(NOT_SUPPORTED, "This connector only supports delete where one or more partitions are deleted entirely");
+    }
+
+    @Override
+    public boolean isLegacyGetLayoutSupported(ConnectorSession session, ConnectorTableHandle tableHandle)
+    {
+        return !isPushdownFilterEnabled(session);
     }
 
     protected List<ColumnMetadata> getColumnMetadatas(org.apache.iceberg.Table table)
