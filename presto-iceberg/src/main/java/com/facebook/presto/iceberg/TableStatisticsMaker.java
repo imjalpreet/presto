@@ -104,7 +104,7 @@ public class TableStatisticsMaker
                 .collect(toImmutableList());
 
         List<Type> icebergPartitionTypes = partitionTypes(partitionFields, idToTypeMapping);
-        List<IcebergColumnHandle> columnHandles = getColumns(icebergTable.schema(), typeManager);
+        List<IcebergColumnHandle> columnHandles = getColumns(icebergTable.schema(), icebergTable.spec(), typeManager);
         Map<Integer, IcebergColumnHandle> idToColumnHandle = columnHandles.stream()
                 .collect(toImmutableMap(IcebergColumnHandle::getId, identity()));
 

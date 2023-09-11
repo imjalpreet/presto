@@ -126,11 +126,17 @@ public final class FilterPushdownUtils
 
     public static TupleDomain<ColumnHandle> getEntireColumnDomain(
             Result result,
-            Map<String, ColumnHandle> columnHandles)
+            Map<String, ColumnHandle> columnHandles,
+            Optional<ConnectorTableLayoutHandle> currentLayoutHandle)
     {
         TupleDomain<ColumnHandle> entireColumnDomain = result.getDecomposedFilter().getTupleDomain()
                 .transform(subfield -> isEntireColumn(subfield) ? subfield.getRootName() : null)
                 .transform(columnHandles::get);
+
+        if (currentLayoutHandle.isPresent()) {
+            entireColumnDomain = entireColumnDomain.intersect(((BaseHiveTableLayoutHandle) (currentLayoutHandle.get()))
+                    .getPartitionColumnPredicate());
+        }
 
         return entireColumnDomain;
     }

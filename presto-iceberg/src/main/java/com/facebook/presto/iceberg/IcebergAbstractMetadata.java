@@ -16,7 +16,11 @@ package com.facebook.presto.iceberg;
 import com.facebook.airlift.json.JsonCodec;
 import com.facebook.airlift.log.Logger;
 import com.facebook.presto.common.Subfield;
+import com.facebook.presto.common.predicate.Domain;
+import com.facebook.presto.common.predicate.NullableValue;
+import com.facebook.presto.common.predicate.TupleDomain;
 import com.facebook.presto.common.type.TypeManager;
+import com.facebook.presto.hive.HivePartition;
 import com.facebook.presto.hive.HiveWrittenPartitions;
 import com.facebook.presto.spi.ColumnHandle;
 import com.facebook.presto.spi.ColumnMetadata;
@@ -56,6 +60,7 @@ import org.apache.iceberg.types.Types;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -63,8 +68,10 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static com.facebook.presto.common.predicate.TupleDomain.withColumnDomains;
 import static com.facebook.presto.common.type.BigintType.BIGINT;
 import static com.facebook.presto.expressions.LogicalRowExpressions.TRUE_CONSTANT;
+import static com.facebook.presto.hive.HiveErrorCode.HIVE_UNKNOWN_ERROR;
 import static com.facebook.presto.iceberg.IcebergColumnHandle.primitiveIcebergColumnHandle;
 import static com.facebook.presto.iceberg.IcebergSessionProperties.isPushdownFilterEnabled;
 import static com.facebook.presto.iceberg.IcebergTableProperties.FILE_FORMAT_PROPERTY;
@@ -78,10 +85,15 @@ import static com.facebook.presto.iceberg.PartitionFields.toPartitionFields;
 import static com.facebook.presto.iceberg.TypeConverter.toIcebergType;
 import static com.facebook.presto.iceberg.TypeConverter.toPrestoType;
 import static com.facebook.presto.spi.StandardErrorCode.NOT_SUPPORTED;
+import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.common.collect.ImmutableMap.toImmutableMap;
+import static java.lang.String.format;
+import static java.util.Collections.emptyList;
 import static java.util.Collections.singletonList;
 import static java.util.Objects.requireNonNull;
+import static java.util.function.Function.identity;
+import static java.util.stream.Collectors.toMap;
 
 public abstract class IcebergAbstractMetadata
         implements ConnectorMetadata
@@ -119,7 +131,18 @@ public abstract class IcebergAbstractMetadata
                 .map(IcebergColumnHandle.class::cast)
                 .collect(toImmutableMap(IcebergColumnHandle::getName, Functions.identity()));
 
-        ConnectorTableLayout layout = new ConnectorTableLayout(new IcebergTableLayoutHandle(constraint.getSummary().transform(IcebergAbstractMetadata::toSubfield), TRUE_CONSTANT, predicateColumns, Optional.empty(), isPushdownFilterEnabled(session), handle));
+        ConnectorTableLayout layout = new ConnectorTableLayout(
+                new IcebergTableLayoutHandle.Builder()
+                        .setPartitionColumns(emptyList())
+                        .setDomainPredicate(constraint.getSummary().transform(IcebergAbstractMetadata::toSubfield))
+                        .setRemainingPredicate(TRUE_CONSTANT)
+                        .setPredicateColumns(predicateColumns)
+                        .setRequestedColumns(Optional.empty())
+                        .setPushdownFilterEnabled(isPushdownFilterEnabled(session))
+                        .setPartitionColumnPredicate(TupleDomain.all())
+                        .setPartitions(Optional.empty())
+                        .setTable(handle)
+                        .build());
         return ImmutableList.of(new ConnectorTableLayoutResult(layout, constraint.getSummary()));
     }
 
@@ -137,6 +160,55 @@ public abstract class IcebergAbstractMetadata
     public ConnectorTableLayout getTableLayout(ConnectorSession session, ConnectorTableLayoutHandle handle)
     {
         return new ConnectorTableLayout(handle);
+    }
+
+    static TupleDomain<ColumnHandle> createPredicate(List<ColumnHandle> partitionColumns, List<HivePartition> partitions)
+    {
+        if (partitions.isEmpty()) {
+            return TupleDomain.none();
+        }
+
+        return withColumnDomains(
+                partitionColumns.stream()
+                        .collect(toMap(identity(), column -> buildColumnDomain(column, partitions))));
+    }
+
+    private static Domain buildColumnDomain(ColumnHandle column, List<HivePartition> partitions)
+    {
+        checkArgument(!partitions.isEmpty(), "partitions cannot be empty");
+
+        boolean hasNull = false;
+        Set<Object> nonNullValues = new HashSet<>();
+        com.facebook.presto.common.type.Type type = null;
+
+        for (HivePartition partition : partitions) {
+            NullableValue value = partition.getKeys().get(column);
+            if (value == null) {
+                throw new PrestoException(HIVE_UNKNOWN_ERROR, format("Partition %s does not have a value for partition column %s", partition, column));
+            }
+
+            if (value.isNull()) {
+                hasNull = true;
+            }
+            else {
+                nonNullValues.add(value.getValue());
+            }
+
+            if (type == null) {
+                type = value.getType();
+            }
+        }
+
+        if (!nonNullValues.isEmpty()) {
+            Domain domain = Domain.multipleValues(type, ImmutableList.copyOf(nonNullValues));
+            if (hasNull) {
+                return domain.union(Domain.onlyNull(type));
+            }
+
+            return domain;
+        }
+
+        return Domain.onlyNull(type);
     }
 
     protected Optional<SystemTable> getIcebergSystemTable(SchemaTableName tableName, org.apache.iceberg.Table table)
@@ -235,7 +307,7 @@ public abstract class IcebergAbstractMetadata
                 table.getTableName(),
                 SchemaParser.toJson(icebergTable.schema()),
                 PartitionSpecParser.toJson(icebergTable.spec()),
-                getColumns(icebergTable.schema(), typeManager),
+                getColumns(icebergTable.schema(), icebergTable.spec(), typeManager),
                 icebergTable.location(),
                 getFileFormat(icebergTable),
                 icebergTable.properties());

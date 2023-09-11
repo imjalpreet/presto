@@ -54,7 +54,6 @@ public class HiveTableLayoutHandle
     private final List<Column> dataColumns;
     private final Map<String, String> tableParameters;
     private final Map<String, HiveColumnHandle> predicateColumns;
-    private final TupleDomain<ColumnHandle> partitionColumnPredicate;
     private final Optional<HiveBucketHandle> bucketHandle;
     private final Optional<HiveBucketFilter> bucketFilter;
     private final String layoutString;
@@ -130,7 +129,7 @@ public class HiveTableLayoutHandle
             boolean footerStatsUnreliable,
             Optional<HiveTableHandle> hiveTableHandle)
     {
-        super(domainPredicate, remainingPredicate, pushdownFilterEnabled);
+        super(domainPredicate, remainingPredicate, pushdownFilterEnabled, partitionColumnPredicate, partitions);
 
         this.schemaTableName = requireNonNull(schemaTableName, "table is null");
         this.tablePath = requireNonNull(tablePath, "tablePath is null");
@@ -138,7 +137,6 @@ public class HiveTableLayoutHandle
         this.dataColumns = ImmutableList.copyOf(requireNonNull(dataColumns, "dataColumns is null"));
         this.tableParameters = ImmutableMap.copyOf(requireNonNull(tableParameters, "tableProperties is null"));
         this.predicateColumns = requireNonNull(predicateColumns, "predicateColumns is null");
-        this.partitionColumnPredicate = requireNonNull(partitionColumnPredicate, "partitionColumnPredicate is null");
         this.bucketHandle = requireNonNull(bucketHandle, "bucketHandle is null");
         this.bucketFilter = requireNonNull(bucketFilter, "bucketFilter is null");
         this.layoutString = requireNonNull(layoutString, "layoutString is null");
@@ -181,17 +179,6 @@ public class HiveTableLayoutHandle
     }
 
     /**
-     * Partitions are dropped when HiveTableLayoutHandle is serialized.
-     *
-     * @return list of partitions if available, {@code Optional.empty()} if dropped
-     */
-    @JsonIgnore
-    public Optional<List<HivePartition>> getPartitions()
-    {
-        return partitions;
-    }
-
-    /**
      * HiveTableHandle is dropped when HiveTableLayoutHandle is serialized.
      *
      * @return HiveTableHandle if available, {@code Optional.empty()} if dropped
@@ -206,12 +193,6 @@ public class HiveTableLayoutHandle
     public Map<String, HiveColumnHandle> getPredicateColumns()
     {
         return predicateColumns;
-    }
-
-    @JsonProperty
-    public TupleDomain<ColumnHandle> getPartitionColumnPredicate()
-    {
-        return partitionColumnPredicate;
     }
 
     @JsonProperty

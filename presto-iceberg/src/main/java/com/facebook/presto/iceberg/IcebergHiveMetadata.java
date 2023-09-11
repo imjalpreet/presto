@@ -20,6 +20,7 @@ import com.facebook.presto.common.type.TypeManager;
 import com.facebook.presto.hive.HdfsContext;
 import com.facebook.presto.hive.HdfsEnvironment;
 import com.facebook.presto.hive.HiveColumnConverterProvider;
+import com.facebook.presto.hive.HivePartition;
 import com.facebook.presto.hive.SubfieldExtractor;
 import com.facebook.presto.hive.TableAlreadyExistsException;
 import com.facebook.presto.hive.metastore.Database;
@@ -50,8 +51,11 @@ import com.facebook.presto.spi.relation.RowExpressionService;
 import com.facebook.presto.spi.relation.SpecialFormExpression;
 import com.facebook.presto.spi.statistics.TableStatistics;
 import com.google.common.base.Functions;
+import com.google.common.base.Predicates;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.Iterables;
+import com.google.common.collect.Maps;
 import org.apache.hadoop.fs.Path;
 import org.apache.iceberg.FileFormat;
 import org.apache.iceberg.PartitionSpec;
@@ -79,6 +83,7 @@ import static com.facebook.presto.iceberg.IcebergTableProperties.getPartitioning
 import static com.facebook.presto.iceberg.IcebergTableProperties.getTableLocation;
 import static com.facebook.presto.iceberg.IcebergUtil.getColumns;
 import static com.facebook.presto.iceberg.IcebergUtil.getHiveIcebergTable;
+import static com.facebook.presto.iceberg.IcebergUtil.getPartitionKeyColumnHandles;
 import static com.facebook.presto.iceberg.IcebergUtil.getTableComment;
 import static com.facebook.presto.iceberg.IcebergUtil.isIcebergTable;
 import static com.facebook.presto.iceberg.PartitionFields.parsePartitionFields;
@@ -154,7 +159,17 @@ public class IcebergHiveMetadata
 
         org.apache.iceberg.Table icebergTable = getHiveIcebergTable(metastore, hdfsEnvironment, session, tableHandle.getSchemaTableName());
 
+        List<ColumnHandle> partitionColumns = ImmutableList.copyOf(icebergTableLayoutHandle.getPartitionColumns());
+        List<HivePartition> partitions = icebergTableLayoutHandle.getPartitions().get();
+
         Optional<DiscretePredicates> discretePredicates = Optional.empty();
+        if (!partitionColumns.isEmpty()) {
+            // Do not create tuple domains for every partition at the same time!
+            // There can be a huge number of partitions so use an iterable so
+            // all domains do not need to be in memory at the same time.
+            Iterable<TupleDomain<ColumnHandle>> partitionDomains = Iterables.transform(partitions, (hivePartition) -> TupleDomain.fromFixedValues(hivePartition.getKeys()));
+            discretePredicates = Optional.of(new DiscretePredicates(partitionColumns, partitionDomains));
+        }
 
         TupleDomain<ColumnHandle> predicate;
         RowExpression subfieldPredicate;
@@ -162,11 +177,12 @@ public class IcebergHiveMetadata
             predicate = icebergTableLayoutHandle.getDomainPredicate()
                     .transform(subfield -> isEntireColumn(subfield) ? subfield.getRootName() : null)
                     .transform(icebergTableLayoutHandle.getPredicateColumns()::get)
-                    .transform(ColumnHandle.class::cast);
+                    .transform(ColumnHandle.class::cast)
+                    .intersect(createPredicate(partitionColumns, partitions));
 
             // capture subfields from domainPredicate to add to remainingPredicate
             // so those filters don't get lost
-            Map<String, Type> columnTypes = getColumns(icebergTable.schema(), typeManager).stream()
+            Map<String, Type> columnTypes = getColumns(icebergTable.schema(), icebergTable.spec(), typeManager).stream()
                     .collect(toImmutableMap(IcebergColumnHandle::getName, icebergColumnHandle -> getColumnMetadata(session, tableHandle, icebergColumnHandle).getType()));
             SubfieldExtractor subfieldExtractor = new SubfieldExtractor(functionResolution, rowExpressionService.getExpressionOptimizer(), session);
 
@@ -176,8 +192,7 @@ public class IcebergHiveMetadata
                             .transform(subfield -> subfieldExtractor.toRowExpression(subfield, columnTypes.get(subfield.getRootName()))));
         }
         else {
-            // TODO: Need to implement, still incomplete
-            predicate = TupleDomain.none();
+            predicate = createPredicate(partitionColumns, partitions);
             subfieldPredicate = TRUE_CONSTANT;
         }
 
@@ -251,8 +266,21 @@ public class IcebergHiveMetadata
                 .map(IcebergColumnHandle.class::cast)
                 .collect(toImmutableMap(IcebergColumnHandle::getName, Functions.identity()));
 
+        TupleDomain<ColumnHandle> partitionColumnPredicate = TupleDomain.withColumnDomains(Maps.filterKeys(constraint.getSummary().getDomains().get(), Predicates.in(getPartitionKeyColumnHandles(icebergTable, typeManager))));
         Optional<Set<IcebergColumnHandle>> requestedColumns = desiredColumns.map(columns -> columns.stream().map(column -> (IcebergColumnHandle) column).collect(toImmutableSet()));
-        ConnectorTableLayout layout = getTableLayout(session, new IcebergTableLayoutHandle(constraint.getSummary().transform(IcebergAbstractMetadata::toSubfield), TRUE_CONSTANT, predicateColumns, requestedColumns, isPushdownFilterEnabled(session), handle));
+        ConnectorTableLayout layout = getTableLayout(
+                session,
+                new IcebergTableLayoutHandle.Builder()
+                        .setPartitionColumns(getPartitionKeyColumnHandles(icebergTable, typeManager))
+                        .setDomainPredicate(constraint.getSummary().transform(IcebergAbstractMetadata::toSubfield))
+                        .setRemainingPredicate(TRUE_CONSTANT)
+                        .setPredicateColumns(predicateColumns)
+                        .setRequestedColumns(requestedColumns)
+                        .setPushdownFilterEnabled(isPushdownFilterEnabled(session))
+                        .setPartitionColumnPredicate(partitionColumnPredicate)
+                        .setPartitions(Optional.empty())
+                        .setTable(handle)
+                        .build());
         return ImmutableList.of(new ConnectorTableLayoutResult(layout, constraint.getSummary()));
     }
 
@@ -302,7 +330,7 @@ public class IcebergHiveMetadata
     {
         IcebergTableHandle table = (IcebergTableHandle) tableHandle;
         org.apache.iceberg.Table icebergTable = getHiveIcebergTable(metastore, hdfsEnvironment, session, table.getSchemaTableName());
-        return getColumns(icebergTable.schema(), typeManager).stream()
+        return getColumns(icebergTable.schema(), icebergTable.spec(), typeManager).stream()
                 .collect(toImmutableMap(IcebergColumnHandle::getName, identity()));
     }
 
@@ -411,7 +439,7 @@ public class IcebergHiveMetadata
                 tableName,
                 SchemaParser.toJson(metadata.schema()),
                 PartitionSpecParser.toJson(metadata.spec()),
-                getColumns(metadata.schema(), typeManager),
+                getColumns(metadata.schema(), metadata.spec(), typeManager),
                 targetPath,
                 fileFormat,
                 metadata.properties());

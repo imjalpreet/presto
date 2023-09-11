@@ -158,12 +158,7 @@ public class HiveFilterPushdown
         }
 
         Map<String, ColumnHandle> columnHandles = metadata.getColumnHandles(session, tableHandle);
-        TupleDomain<ColumnHandle> entireColumnDomain = getEntireColumnDomain(result, columnHandles);
-
-        if (currentLayoutHandle.isPresent()) {
-            entireColumnDomain = entireColumnDomain.intersect(((HiveTableLayoutHandle) (currentLayoutHandle.get()))
-                    .getPartitionColumnPredicate());
-        }
+        TupleDomain<ColumnHandle> entireColumnDomain = getEntireColumnDomain(result, columnHandles, currentLayoutHandle);
 
         Constraint<ColumnHandle> constraint = new Constraint<>(entireColumnDomain);
 

@@ -15,10 +15,15 @@ package com.facebook.presto.hive;
 
 import com.facebook.presto.common.Subfield;
 import com.facebook.presto.common.predicate.TupleDomain;
+import com.facebook.presto.spi.ColumnHandle;
 import com.facebook.presto.spi.ConnectorTableLayoutHandle;
 import com.facebook.presto.spi.relation.RowExpression;
 import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
+
+import java.util.List;
+import java.util.Optional;
 
 import static java.util.Objects.requireNonNull;
 
@@ -28,16 +33,24 @@ public class BaseHiveTableLayoutHandle
     private final TupleDomain<Subfield> domainPredicate;
     private final RowExpression remainingPredicate;
     private final boolean pushdownFilterEnabled;
+    private final TupleDomain<ColumnHandle> partitionColumnPredicate;
+
+    // coordinator-only properties
+    private final Optional<List<HivePartition>> partitions;
 
     @JsonCreator
     public BaseHiveTableLayoutHandle(
             @JsonProperty("domainPredicate") TupleDomain<Subfield> domainPredicate,
             @JsonProperty("remainingPredicate") RowExpression remainingPredicate,
-            @JsonProperty("pushdownFilterEnabled") boolean pushdownFilterEnabled)
+            @JsonProperty("pushdownFilterEnabled") boolean pushdownFilterEnabled,
+            @JsonProperty("partitionColumnPredicate") TupleDomain<ColumnHandle> partitionColumnPredicate,
+            @JsonProperty("partitions") Optional<List<HivePartition>> partitions)
     {
         this.domainPredicate = requireNonNull(domainPredicate, "domainPredicate is null");
         this.remainingPredicate = requireNonNull(remainingPredicate, "remainingPredicate is null");
         this.pushdownFilterEnabled = pushdownFilterEnabled;
+        this.partitionColumnPredicate = requireNonNull(partitionColumnPredicate, "partitionColumnPredicate is null");
+        this.partitions = requireNonNull(partitions, "partitions is null");
     }
 
     @JsonProperty
@@ -56,5 +69,22 @@ public class BaseHiveTableLayoutHandle
     public boolean isPushdownFilterEnabled()
     {
         return pushdownFilterEnabled;
+    }
+
+    @JsonProperty
+    public TupleDomain<ColumnHandle> getPartitionColumnPredicate()
+    {
+        return partitionColumnPredicate;
+    }
+
+    /**
+     * Partitions are dropped when HiveTableLayoutHandle is serialized.
+     *
+     * @return list of partitions if available, {@code Optional.empty()} if dropped
+     */
+    @JsonIgnore
+    public Optional<List<HivePartition>> getPartitions()
+    {
+        return partitions;
     }
 }
