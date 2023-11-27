@@ -155,6 +155,11 @@ public class IcebergHiveMetadata
         this.filterStatsCalculatorService = requireNonNull(filterStatsCalculatorService, "filterStatsCalculatorService is null");
     }
 
+    public ExtendedHiveMetastore getMetastore()
+    {
+        return metastore;
+    }
+
     @Override
     protected org.apache.iceberg.Table getIcebergTable(ConnectorSession session, SchemaTableName schemaTableName)
     {
