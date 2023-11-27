@@ -16,7 +16,7 @@ package com.facebook.presto.hive;
 import com.facebook.airlift.configuration.Config;
 import com.facebook.airlift.configuration.ConfigDescription;
 
-public class BaseHiveClientConfig
+public class HiveCommonClientConfig
 {
     private boolean rangeFiltersOnSubscriptsEnabled;
     public boolean isRangeFiltersOnSubscriptsEnabled()
@@ -26,7 +26,7 @@ public class BaseHiveClientConfig
 
     @Config("hive.range-filters-on-subscripts-enabled")
     @ConfigDescription("Experimental: enable pushdown of range filters on subscripts (a[2] = 5) into ORC column readers")
-    public BaseHiveClientConfig setRangeFiltersOnSubscriptsEnabled(boolean rangeFiltersOnSubscriptsEnabled)
+    public HiveCommonClientConfig setRangeFiltersOnSubscriptsEnabled(boolean rangeFiltersOnSubscriptsEnabled)
     {
         this.rangeFiltersOnSubscriptsEnabled = rangeFiltersOnSubscriptsEnabled;
         return this;

@@ -115,8 +115,8 @@ public class TestDomainTranslator
                 new OrcFileWriterConfig(),
                 new ParquetFileWriterConfig(),
                 new CacheConfig()).getSessionProperties());
-        allSessionProperties.addAll(new BaseHiveSessionProperties(
-                new BaseHiveClientConfig().setRangeFiltersOnSubscriptsEnabled(true)).getSessionProperties());
+        allSessionProperties.addAll(new HiveCommonSessionProperties(
+                new HiveCommonClientConfig().setRangeFiltersOnSubscriptsEnabled(true)).getSessionProperties());
 
         columnExtractor = new SubfieldExtractor(
                 new FunctionResolution(metadata.getFunctionAndTypeManager().getFunctionAndTypeResolver()),

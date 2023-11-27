@@ -149,7 +149,7 @@ public class HiveConnectorFactory
             ConnectorPageSinkProvider pageSinkProvider = injector.getInstance(ConnectorPageSinkProvider.class);
             ConnectorNodePartitioningProvider connectorDistributionProvider = injector.getInstance(ConnectorNodePartitioningProvider.class);
             HiveSessionProperties hiveSessionProperties = injector.getInstance(HiveSessionProperties.class);
-            BaseHiveSessionProperties baseHiveSessionProperties = injector.getInstance(BaseHiveSessionProperties.class);
+            HiveCommonSessionProperties hiveCommonSessionProperties = injector.getInstance(HiveCommonSessionProperties.class);
             HiveTableProperties hiveTableProperties = injector.getInstance(HiveTableProperties.class);
             HiveAnalyzeProperties hiveAnalyzeProperties = injector.getInstance(HiveAnalyzeProperties.class);
             ConnectorAccessControl accessControl = new SystemTableAwareAccessControl(injector.getInstance(ConnectorAccessControl.class));
@@ -159,7 +159,7 @@ public class HiveConnectorFactory
             ConnectorTypeSerdeProvider connectorTypeSerdeProvider = injector.getInstance(ConnectorTypeSerdeProvider.class);
 
             List<PropertyMetadata<?>> allSessionProperties = new ArrayList<>(hiveSessionProperties.getSessionProperties());
-            allSessionProperties.addAll(baseHiveSessionProperties.getSessionProperties());
+            allSessionProperties.addAll(hiveCommonSessionProperties.getSessionProperties());
 
             return new HiveConnector(
                     lifeCycleManager,

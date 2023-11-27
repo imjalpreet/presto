@@ -19,12 +19,12 @@ import org.testng.annotations.Test;
 
 import java.util.Map;
 
-public class TestBaseHiveClientConfig
+public class TestHiveCommonClientConfig
 {
     @Test
     public void testDefaults()
     {
-        ConfigAssertions.assertRecordedDefaults(ConfigAssertions.recordDefaults(BaseHiveClientConfig.class)
+        ConfigAssertions.assertRecordedDefaults(ConfigAssertions.recordDefaults(HiveCommonClientConfig.class)
                 .setRangeFiltersOnSubscriptsEnabled(false));
     }
 
@@ -35,7 +35,7 @@ public class TestBaseHiveClientConfig
                 .put("hive.range-filters-on-subscripts-enabled", "true")
                 .build();
 
-        BaseHiveClientConfig expected = new BaseHiveClientConfig()
+        HiveCommonClientConfig expected = new HiveCommonClientConfig()
                 .setRangeFiltersOnSubscriptsEnabled(true);
 
         ConfigAssertions.assertFullMapping(properties, expected);

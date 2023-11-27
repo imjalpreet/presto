@@ -23,13 +23,13 @@ import java.util.List;
 
 import static com.facebook.presto.spi.session.PropertyMetadata.booleanProperty;
 
-public class BaseHiveSessionProperties
+public class HiveCommonSessionProperties
 {
     public static final String RANGE_FILTERS_ON_SUBSCRIPTS_ENABLED = "range_filters_on_subscripts_enabled";
     private final List<PropertyMetadata<?>> sessionProperties;
 
     @Inject
-    public BaseHiveSessionProperties(BaseHiveClientConfig hiveClientConfig)
+    public HiveCommonSessionProperties(HiveCommonClientConfig hiveClientConfig)
     {
         sessionProperties = ImmutableList.of(
                 booleanProperty(
