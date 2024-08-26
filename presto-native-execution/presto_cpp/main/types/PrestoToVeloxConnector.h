@@ -19,6 +19,7 @@
 #include "presto_cpp/presto_protocol/presto_protocol.h"
 #include "velox/connectors/Connector.h"
 #include "velox/connectors/hive/TableHandle.h"
+#include "velox/connectors/hive/iceberg/IcebergDataSink.h"
 #include "velox/core/PlanNode.h"
 #include "velox/vector/ComplexVector.h"
 
@@ -181,8 +182,45 @@ class IcebergPrestoToVeloxConnector final : public PrestoToVeloxConnector {
           std::shared_ptr<velox::connector::ColumnHandle>>& assignments)
       const final;
 
+  std::unique_ptr<velox::connector::ConnectorInsertTableHandle>
+  toVeloxInsertTableHandle(
+      const protocol::CreateHandle* createHandle,
+      const TypeParser& typeParser) const final;
+
+  std::unique_ptr<velox::connector::ConnectorInsertTableHandle>
+  toVeloxInsertTableHandle(
+      const protocol::InsertHandle* insertHandle,
+      const TypeParser& typeParser) const final;
+
   std::unique_ptr<protocol::ConnectorProtocol> createConnectorProtocol()
       const final;
+
+ private:
+  std::vector<std::shared_ptr<const velox::connector::hive::HiveColumnHandle>>
+  toHiveColumns(
+      const protocol::List<protocol::IcebergColumnHandle>& inputColumns,
+      const TypeParser& typeParser,
+      bool& hasPartitionColumn) const;
+
+  std::vector<std::shared_ptr<const velox::connector::hive::iceberg::VeloxIcebergNestedField>>
+  toVeloxIcebergNestedFields(
+      const protocol::List<protocol::PrestoIcebergNestedField>& columns,
+      const TypeParser& typeParser) const;
+
+  std::unique_ptr<velox::connector::hive::iceberg::VeloxIcebergNestedField>
+  toVeloxIcebergNestedField(
+      const protocol::PrestoIcebergNestedField* column,
+      const TypeParser& typeParser) const;
+
+  std::unique_ptr<velox::connector::hive::iceberg::VeloxIcebergSchema>
+  toVeloxIcebergSchema(
+      const protocol::PrestoIcebergSchema& schema,
+      const TypeParser& typeParser) const;
+
+  std::unique_ptr<velox::connector::hive::iceberg::VeloxIcebergPartitionSpec>
+  toVeloxIcebergPartitionSpec(
+      const protocol::PrestoIcebergPartitionSpec& spec,
+      const TypeParser& typeParser) const;
 };
 
 class TpchPrestoToVeloxConnector final : public PrestoToVeloxConnector {
