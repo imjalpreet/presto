@@ -39,6 +39,7 @@ import org.intellij.lang.annotations.Language;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.util.HashMap;
 import java.util.Map;
 
 import static com.facebook.presto.accumulo.AccumuloErrorCode.MINI_ACCUMULO;
@@ -196,6 +197,9 @@ public final class AccumuloQueryRunner
         MiniAccumuloCluster accumulo = new MiniAccumuloCluster(macDir, MAC_PASSWORD);
         accumulo.getConfig().setDefaultMemory(512, MEGABYTE);
         setConfigClassPath(accumulo.getConfig());
+        Map<String, String> coresiteMap = new HashMap<>();
+        coresiteMap.put("fs.defaultFS", "file:///");
+        accumulo.getConfig().setSiteConfig(coresiteMap);
         accumulo.start();
 
         // Add shutdown hook to stop MAC and cleanup temporary files
