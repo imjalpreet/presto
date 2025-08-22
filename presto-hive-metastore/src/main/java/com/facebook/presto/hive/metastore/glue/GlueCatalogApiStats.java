@@ -13,8 +13,7 @@
  */
 package com.facebook.presto.hive.metastore.glue;
 
-import com.amazonaws.AmazonWebServiceRequest;
-import com.amazonaws.handlers.AsyncHandler;
+// Removed AWS SDK 1.x imports. If needed, replace with AWS SDK 2.x equivalents or remove if unused.
 import com.facebook.airlift.stats.CounterStat;
 import com.facebook.airlift.stats.TimeStat;
 import com.google.errorprone.annotations.ThreadSafe;

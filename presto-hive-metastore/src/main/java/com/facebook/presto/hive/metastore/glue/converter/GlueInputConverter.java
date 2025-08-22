@@ -13,12 +13,12 @@
  */
 package com.facebook.presto.hive.metastore.glue.converter;
 
-import com.amazonaws.services.glue.model.DatabaseInput;
-import com.amazonaws.services.glue.model.Order;
-import com.amazonaws.services.glue.model.PartitionInput;
-import com.amazonaws.services.glue.model.SerDeInfo;
-import com.amazonaws.services.glue.model.StorageDescriptor;
-import com.amazonaws.services.glue.model.TableInput;
+import software.amazon.awssdk.services.glue.model.DatabaseInput;
+import software.amazon.awssdk.services.glue.model.Order;
+import software.amazon.awssdk.services.glue.model.PartitionInput;
+import software.amazon.awssdk.services.glue.model.SerDeInfo;
+import software.amazon.awssdk.services.glue.model.StorageDescriptor;
+import software.amazon.awssdk.services.glue.model.TableInput;
 import com.facebook.presto.hive.HiveBucketProperty;
 import com.facebook.presto.hive.metastore.Column;
 import com.facebook.presto.hive.metastore.Database;
@@ -72,7 +72,7 @@ public final class GlueInputConverter
         return input;
     }
 
-    public static TableInput toTableInput(com.amazonaws.services.glue.model.Table table)
+    public static TableInput toTableInput(software.amazon.awssdk.services.glue.model.Table table)
     {
         TableInput input = new TableInput();
         input.setName(table.getName());
@@ -137,11 +137,12 @@ public final class GlueInputConverter
         return sd;
     }
 
-    public static com.amazonaws.services.glue.model.Column convertColumn(Column prestoColumn)
+    public static software.amazon.awssdk.services.glue.model.Column convertColumn(Column prestoColumn)
     {
-        return new com.amazonaws.services.glue.model.Column()
-                .withName(prestoColumn.getName())
-                .withType(prestoColumn.getType().toString())
-                .withComment(prestoColumn.getComment().orElse(null));
+        return software.amazon.awssdk.services.glue.model.Column.builder()
+                .name(prestoColumn.getName())
+                .type(prestoColumn.getType().toString())
+                .comment(prestoColumn.getComment().orElse(null))
+                .build();
     }
 }

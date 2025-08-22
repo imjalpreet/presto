@@ -13,8 +13,8 @@
  */
 package com.facebook.presto.hive.metastore.glue.converter;
 
-import com.amazonaws.services.glue.model.SerDeInfo;
-import com.amazonaws.services.glue.model.StorageDescriptor;
+import software.amazon.awssdk.services.glue.model.SerDeInfo;
+import software.amazon.awssdk.services.glue.model.StorageDescriptor;
 import com.facebook.presto.hive.HiveBucketProperty;
 import com.facebook.presto.hive.HiveStorageFormat;
 import com.facebook.presto.hive.HiveType;
@@ -57,7 +57,7 @@ public final class GlueToPrestoConverter
 
     private GlueToPrestoConverter() {}
 
-    public static Database convertDatabase(com.amazonaws.services.glue.model.Database glueDb)
+    public static Database convertDatabase(software.amazon.awssdk.services.glue.model.Database glueDb)
     {
         return Database.builder()
                 .setDatabaseName(glueDb.getName())
@@ -69,7 +69,7 @@ public final class GlueToPrestoConverter
                 .build();
     }
 
-    public static Table convertTable(com.amazonaws.services.glue.model.Table glueTable, String dbName)
+    public static Table convertTable(software.amazon.awssdk.services.glue.model.Table glueTable, String dbName)
     {
         Map<String, String> tableParameters = convertParameters(glueTable.getParameters());
 
@@ -109,12 +109,12 @@ public final class GlueToPrestoConverter
         return tableBuilder.build();
     }
 
-    private static Column convertColumn(com.amazonaws.services.glue.model.Column glueColumn)
+    private static Column convertColumn(software.amazon.awssdk.services.glue.model.Column glueColumn)
     {
         return new Column(glueColumn.getName(), HiveType.valueOf(glueColumn.getType().toLowerCase(Locale.ENGLISH)), Optional.ofNullable(glueColumn.getComment()), Optional.empty());
     }
 
-    private static List<Column> convertColumns(List<com.amazonaws.services.glue.model.Column> glueColumns)
+    private static List<Column> convertColumns(List<software.amazon.awssdk.services.glue.model.Column> glueColumns)
     {
         return mappedCopy(glueColumns, GlueToPrestoConverter::convertColumn);
     }
@@ -138,9 +138,9 @@ public final class GlueToPrestoConverter
     }
 
     public static final class GluePartitionConverter
-            implements Function<com.amazonaws.services.glue.model.Partition, Partition>
+            implements Function<software.amazon.awssdk.services.glue.model.Partition, Partition>
     {
-        private final Function<List<com.amazonaws.services.glue.model.Column>, List<Column>> columnsConverter = memoizeLast(GlueToPrestoConverter::convertColumns);
+    private final Function<List<software.amazon.awssdk.services.glue.model.Column>, List<Column>> columnsConverter = memoizeLast(GlueToPrestoConverter::convertColumns);
         private final Function<Map<String, String>, Map<String, String>> parametersConverter = parametersConverter();
         private final StorageConverter storageConverter = new StorageConverter();
         private final String databaseName;
@@ -153,7 +153,7 @@ public final class GlueToPrestoConverter
         }
 
         @Override
-        public Partition apply(com.amazonaws.services.glue.model.Partition gluePartition)
+    public Partition apply(software.amazon.awssdk.services.glue.model.Partition gluePartition)
         {
             requireNonNull(gluePartition.getStorageDescriptor(), "Partition StorageDescriptor is null");
             StorageDescriptor sd = gluePartition.getStorageDescriptor();
@@ -182,7 +182,7 @@ public final class GlueToPrestoConverter
     private static final class StorageConverter
     {
         private final Function<List<String>, List<String>> bucketColumns = memoizeLast(ImmutableList::copyOf);
-        private final Function<List<com.amazonaws.services.glue.model.Order>, List<SortingColumn>> sortColumns = memoizeLast(StorageConverter::createSortingColumns);
+    private final Function<List<software.amazon.awssdk.services.glue.model.Order>, List<SortingColumn>> sortColumns = memoizeLast(StorageConverter::createSortingColumns);
         private final UnaryOperator<Optional<HiveBucketProperty>> bucketProperty = memoizeLast();
         private final Function<Map<String, String>, Map<String, String>> serdeParametersConverter = parametersConverter();
         private final Function<Map<String, String>, Map<String, String>> partitionParametersConverter = parametersConverter();
@@ -214,7 +214,7 @@ public final class GlueToPrestoConverter
             return Optional.empty();
         }
 
-        private static List<SortingColumn> createSortingColumns(List<com.amazonaws.services.glue.model.Order> sortColumns)
+    private static List<SortingColumn> createSortingColumns(List<software.amazon.awssdk.services.glue.model.Order> sortColumns)
         {
             if (isNullOrEmpty(sortColumns)) {
                 return ImmutableList.of();
